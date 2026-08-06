@@ -12,10 +12,13 @@ import asyncio
 import json
 import os
 import re
+import signal
+import shutil
 import sqlite3
 import time
 import urllib.parse
 import urllib.request
+import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -59,6 +62,9 @@ INDEX_FILE = STATIC_DIR / "index.html"
 OBSIDIAN_VAULT = config.OBSIDIAN_VAULT
 
 PIPELINE_SCRIPT = config.PIPELINE_SCRIPT
+PIPELINE_LOG_DIR = DASHBOARD_DIR / "logs" / "pipelines"
+PIPELINE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_pipeline_jobs: dict[str, dict[str, Any]] = {}
 
 # Design reference: canonical visual source of truth for the whole project.
 # Every later visual build (page, card, modal, chart, nav, etc.) must study
@@ -129,6 +135,12 @@ def _inject_telegram_env(env: dict[str, str]) -> None:
 # The dashboard runs under systemd with a stripped env, so we explicitly
 # hydrate these from the per-profile .env file before exec.
 _AGENT_REQUIRED_KEYS = (
+    "TOKENROUTER_API_KEY",
+    "TOKENROUTER_BASE_URL",
+    "TOKENROUTER_MODEL",
+    "TOKENLB_API_KEY",
+    "TOKENLB_BASE_URL",
+    "NOUS_API_KEY",
     "KIRO_GATEWAY_API_KEY",
     "KIMCHI_API_KEY",
     "KIMCHI_BASE_URL",
@@ -136,6 +148,75 @@ _AGENT_REQUIRED_KEYS = (
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
 )
+
+# Dashboard-spawned Hermes runs should use OmniRoute so provider fallback and
+# routing stay centralized. OmniRoute currently routes its Kimchi node with the
+# required Kimchi User-Agent header, while direct Kimchi remains in Hermes as a
+# fallback provider.
+DEFAULT_AGENT_PROVIDER = os.environ.get("MC_AGENT_PROVIDER", "custom:omniroute")
+DEFAULT_AGENT_MODEL = os.environ.get("MC_AGENT_MODEL", "kimchi/kimi-k2.7")
+OMNIROUTE_BASE_URL = os.environ.get("OMNIROUTE_BASE_URL", "http://127.0.0.1:20128/v1").rstrip("/")
+OMNIROUTE_DASHBOARD_URL = os.environ.get("OMNIROUTE_DASHBOARD_URL", "http://127.0.0.1:20128")
+OMNIROUTE_DEFAULT_MODEL = os.environ.get("OMNIROUTE_DEFAULT_MODEL", DEFAULT_AGENT_MODEL)
+
+
+async def _run_cmd_json(cmd: list[str], *, timeout: float = 12.0) -> tuple[Any | None, str, int | None]:
+    """Run a local CLI command and parse the first JSON object/array it prints."""
+    if not cmd or shutil.which(cmd[0]) is None:
+        return None, f"{cmd[0] if cmd else 'command'} not found", None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_b, stderr_b, timed_out = await _communicate_with_timeout(proc, timeout)
+        stdout = stdout_b.decode("utf-8", errors="replace")
+        stderr = stderr_b.decode("utf-8", errors="replace")
+        if timed_out:
+            return None, "timed out", proc.returncode
+        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", stdout).strip()
+        start_positions = [p for p in (text.find("{"), text.find("[")) if p >= 0]
+        if start_positions:
+            try:
+                return json.loads(text[min(start_positions):]), stderr.strip(), proc.returncode
+            except json.JSONDecodeError:
+                pass
+        return None, (stderr or stdout).strip(), proc.returncode
+    except Exception as exc:
+        return None, str(exc), None
+
+
+async def _run_cmd_text(cmd: list[str], *, timeout: float = 12.0) -> tuple[str, str, int | None]:
+    if not cmd or shutil.which(cmd[0]) is None:
+        return "", f"{cmd[0] if cmd else 'command'} not found", None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_b, stderr_b, timed_out = await _communicate_with_timeout(proc, timeout)
+        if timed_out:
+            return stdout_b.decode("utf-8", errors="replace"), "timed out", proc.returncode
+        return (
+            stdout_b.decode("utf-8", errors="replace"),
+            stderr_b.decode("utf-8", errors="replace"),
+            proc.returncode,
+        )
+    except Exception as exc:
+        return "", str(exc), None
+
+
+def _apply_agent_provider_env(env: dict[str, str]) -> tuple[str, str]:
+    """Set the provider/model used by dashboard-launched Hermes processes."""
+    provider = os.environ.get("MC_AGENT_PROVIDER", DEFAULT_AGENT_PROVIDER).strip()
+    model = os.environ.get("MC_AGENT_MODEL", DEFAULT_AGENT_MODEL).strip()
+    provider = provider or DEFAULT_AGENT_PROVIDER
+    model = model or DEFAULT_AGENT_MODEL
+    env["HERMES_INFERENCE_PROVIDER"] = provider
+    env["HERMES_INFERENCE_MODEL"] = model
+    return provider, model
 
 
 def _hydrate_agent_env(env: dict[str, str], profile_dir: Path) -> None:
@@ -165,6 +246,81 @@ def _hydrate_agent_env(env: dict[str, str], profile_dir: Path) -> None:
         key = key.strip()
         if key in _AGENT_REQUIRED_KEYS and not env.get(key):
             env[key] = val.strip().strip('"').strip("'")
+
+
+def _pipeline_preflight() -> list[str]:
+    """Return startup problems that would make the upload pipeline fail."""
+    problems: list[str] = []
+    if not HERMES_HOME_BILL.is_dir():
+        problems.append(f"HERMES_HOME not found: {HERMES_HOME_BILL}")
+    if not HERMES_PYTHON.is_file():
+        problems.append(f"Hermes Python not found: {HERMES_PYTHON}")
+    if not PIPELINE_SCRIPT.is_file():
+        problems.append(f"pipeline script not found: {PIPELINE_SCRIPT}")
+    for agent in ("vault", "scholar", "quizmaster", "planner"):
+        profile = PROFILES_DIR / agent
+        if not profile.is_dir():
+            problems.append(f"profile for '{agent}' not found: {profile}")
+    return problems
+
+
+def _compact_tail(text: str, *, limit: int = 4000) -> str:
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
+async def _watch_pipeline_job(job_id: str, proc: asyncio.subprocess.Process, log_path: Path) -> None:
+    job = _pipeline_jobs.get(job_id)
+    if not job:
+        return
+    job["status"] = "running"
+    try:
+        rc = await proc.wait()
+        job["returncode"] = rc
+        job["status"] = "complete" if rc == 0 else "failed"
+    except Exception as e:  # noqa: BLE001 - background status should never disappear
+        job["status"] = "failed"
+        job["error"] = repr(e)
+    finally:
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            job["log_tail"] = _compact_tail(log_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            job["log_tail"] = ""
+
+
+def _signal_process_group(proc: asyncio.subprocess.Process, sig: signal.Signals) -> None:
+    """Signal a subprocess and any children it spawned."""
+    if proc.returncode is not None:
+        return
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        return
+    except Exception:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
+async def _communicate_with_timeout(
+    proc: asyncio.subprocess.Process,
+    timeout: float | None,
+) -> tuple[bytes, bytes, bool]:
+    """Communicate with a process, killing its whole process group on timeout."""
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return stdout_bytes, stderr_bytes, False
+    except asyncio.TimeoutError:
+        _signal_process_group(proc, signal.SIGTERM)
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+        except asyncio.TimeoutError:
+            _signal_process_group(proc, signal.SIGKILL)
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+        return stdout_bytes, stderr_bytes, True
 
 
 
@@ -496,29 +652,26 @@ async def _run_agent_chat_turn(agent: str, user_text: str) -> None:
         env["AGENT_LOG_DB"] = str(AGENT_LOG_DB)
         _inject_telegram_env(env)
         _hydrate_agent_env(env, hermes_home if agent != "bill" else HERMES_HOME_BILL)
-        env.setdefault("HERMES_INFERENCE_PROVIDER", "custom:tokenrouter")
-        env.setdefault("HERMES_INFERENCE_MODEL", "MiniMax-M3")
+        provider_flag, model_flag = _apply_agent_provider_env(env)
 
         cmd = [
             str(HERMES_PYTHON),
             "-m", "hermes_cli.main",
             "-z", system_prefix,
-            "--provider", "custom:tokenrouter",
-            "--model", "MiniMax-M3",
+            "--provider", provider_flag,
+            "--model", model_flag,
             "--yolo", "--accept-hooks",
         ]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             env=env,
+            start_new_session=True,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=600.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-            stdout_bytes, stderr_bytes = await proc.communicate()
+        stdout_bytes, stderr_bytes, timed_out = await _communicate_with_timeout(proc, 600.0)
+        if timed_out:
             reply_text = "[timeout] The agent took too long to respond. Try again or simplify your request."
             _store_chat_message(agent, "assistant", reply_text)
             await _mirror_message(agent, "assistant", reply_text)
@@ -553,6 +706,37 @@ def _update_research_status(id: int, status: str) -> None:
     conn.close()
 
 
+def _research_log_path(research_id: int) -> Path:
+    return RESEARCH_DIR / ".logs" / f"research_{research_id}.log"
+
+
+def _research_log_tail(research_id: int, *, limit: int = 4000) -> str:
+    log_path = _research_log_path(research_id)
+    if not log_path.is_file():
+        return ""
+    try:
+        return _compact_tail(log_path.read_text(encoding="utf-8", errors="replace"), limit=limit)
+    except OSError:
+        return ""
+
+
+def _refresh_research_row_status(row: dict[str, Any]) -> dict[str, Any]:
+    """Synchronize a research row with its output file and per-run log."""
+    filepath = RESEARCH_DIR / row["filename"]
+    row["ready"] = filepath.is_file()
+    row["log_path"] = str(_research_log_path(int(row["id"])))
+    row["log_tail"] = _research_log_tail(int(row["id"]), limit=1200)
+    if row["status"] == "researching":
+        if row["ready"]:
+            row["status"] = "complete"
+            _update_research_status(int(row["id"]), "complete")
+        elif "scholar exited rc=" in row["log_tail"] or "spawn failed:" in row["log_tail"]:
+            row["status"] = "failed"
+            _update_research_status(int(row["id"]), "failed")
+    row["ready"] = row["status"] == "complete" and filepath.is_file()
+    return row
+
+
 app = FastAPI(title="Mission Control", version=VERSION)
 
 
@@ -581,7 +765,23 @@ _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 @app.middleware("http")
-async def _enforce_same_origin(request: Request, call_next):
+async def _enforce_client_and_same_origin(request: Request, call_next):
+    client_host = request.client.host if request.client else "127.0.0.1"
+    import ipaddress
+    def _is_safe(ip_str: str) -> bool:
+        if ip_str in ("127.0.0.1", "::1", "localhost"):
+            return True
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            return ip in ipaddress.ip_network("100.64.0.0/10") or ip in ipaddress.ip_network("fd7a:115c:a1e0::/48")
+        except ValueError:
+            return False
+    if not _is_safe(client_host):
+        return JSONResponse(
+            {"detail": f"Access forbidden from client host '{client_host}': only localhost and Tailscale allowed"},
+            status_code=403,
+        )
+
     if request.method not in _SAFE_METHODS:
         origin = request.headers.get("origin")
         if origin and _urlparse(origin).netloc != request.headers.get("host", ""):
@@ -699,6 +899,9 @@ async def run_agent_oneshot(
     env = os.environ.copy()
     env["HERMES_HOME"] = str(hermes_home)
     env["AGENT_LOG_DB"] = str(AGENT_LOG_DB)
+    _inject_telegram_env(env)
+    _hydrate_agent_env(env, hermes_home if agent != "bill" else HERMES_HOME_BILL)
+    _apply_agent_provider_env(env)
 
     cmd = [
         str(HERMES_PYTHON),
@@ -712,18 +915,11 @@ async def run_agent_oneshot(
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         env=env,
+        start_new_session=True,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
-        timed_out = False
-    except asyncio.TimeoutError:
-        proc.kill()
-        stdout_bytes, stderr_bytes = await proc.communicate()
-        timed_out = True
+    stdout_bytes, stderr_bytes, timed_out = await _communicate_with_timeout(proc, timeout)
 
     duration = round(time.monotonic() - started, 3)
     return {
@@ -786,6 +982,15 @@ async def subject_upload(
     subject = subject.strip()
     if not subject:
         raise HTTPException(status_code=400, detail="subject is required")
+    preflight_errors = _pipeline_preflight()
+    if preflight_errors:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "upload pipeline is not ready",
+                "errors": preflight_errors,
+            },
+        )
     safe = re.sub(r"[^A-Za-z0-9_\- ]+", "", subject).strip() or "untitled"
     subject_dir = SUBJECTS_DIR / safe
 
@@ -811,26 +1016,64 @@ async def subject_upload(
         dst = uploads_dir / f"{dst.stem}-{ts}{dst.suffix}"
     await _save_upload_streaming(file, dst)
 
-    # Launch pipeline in background (fire-and-forget)
+    # Launch pipeline in background, but keep an inspectable job record and log.
+    job_id = f"{safe}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    log_path = PIPELINE_LOG_DIR / f"{job_id}.log"
     env = os.environ.copy()
     env["HERMES_HOME"] = str(HERMES_HOME_BILL)
     env["AGENT_LOG_DB"] = str(AGENT_LOG_DB)
     # Telegram creds may not be in the systemd env; read from ~/.hermes/.env if missing.
     _inject_telegram_env(env)
-    proc = await asyncio.create_subprocess_exec(
-        str(HERMES_PYTHON),
-        str(PIPELINE_SCRIPT),
-        "--subject", safe,
-        "--file", str(dst),
-        "--timeout", "600",
-        env=env,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+    _hydrate_agent_env(env, HERMES_HOME_BILL)
+    _apply_agent_provider_env(env)
+
+    log_fp = open(log_path, "ab", buffering=0)
+    try:
+        log_fp.write(
+            (
+                f"[dashboard] starting pipeline job {job_id}\n"
+                f"[dashboard] subject={safe}\n"
+                f"[dashboard] file={dst}\n"
+                f"[dashboard] script={PIPELINE_SCRIPT}\n"
+            ).encode("utf-8")
+        )
+        proc = await asyncio.create_subprocess_exec(
+            str(HERMES_PYTHON),
+            str(PIPELINE_SCRIPT),
+            "--subject", safe,
+            "--file", str(dst),
+            "--timeout", "600",
+            env=env,
+            stdout=log_fp,
+            stderr=log_fp,
+        )
+    except Exception as e:
+        log_fp.close()
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "failed to start upload pipeline", "error": repr(e)},
+        ) from e
+    finally:
+        if not log_fp.closed:
+            log_fp.close()
+
+    _pipeline_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "subject": safe,
+        "file": str(dst),
+        "pipeline_pid": proc.pid,
+        "returncode": None,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": None,
+        "log_path": str(log_path),
+        "log_tail": "",
+    }
+    asyncio.create_task(_watch_pipeline_job(job_id, proc, log_path))
 
     return JSONResponse({
         "ok": True,
-        "job_id": f"{safe}_{int(time.time())}",
+        "job_id": job_id,
         "subject": safe,
         "file": {
             "name": safe_name,
@@ -838,8 +1081,25 @@ async def subject_upload(
             "size_bytes": dst.stat().st_size,
         },
         "pipeline_pid": proc.pid,
-        "message": "Bill is now coordinating the agents. Updates will arrive on Telegram.",
+        "status_url": f"/api/subjects/upload/jobs/{job_id}",
+        "log_path": str(log_path),
+        "message": "Pipeline started. Check the job status for logs and final result.",
     })
+
+
+@app.get("/api/subjects/upload/jobs/{job_id}")
+async def subject_upload_job(job_id: str) -> JSONResponse:
+    job = _pipeline_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="upload pipeline job not found")
+    payload = dict(job)
+    log_path = Path(str(job.get("log_path", "")))
+    if log_path.is_file():
+        try:
+            payload["log_tail"] = _compact_tail(log_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            payload["log_tail"] = ""
+    return JSONResponse(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -874,15 +1134,9 @@ async def create_research(payload: dict[str, Any]) -> JSONResponse:
     env["AGENT_LOG_DB"] = str(AGENT_LOG_DB)
     _inject_telegram_env(env)
     _hydrate_agent_env(env, scholar_profile)
-    # Since Scholar's profile config defaults to `custom:tokenrouter` / `MiniMax-M3`,
-    # the dashboard passes `--provider custom:tokenrouter` on the CLI so the oneshot
-    # runner does NOT auto-detect the model name and route it to the wrong
-    # provider. The env var is a backup for subprocesses that
-    # read the environment.
-    env.setdefault("HERMES_INFERENCE_PROVIDER", "custom:tokenrouter")
-    env.setdefault("HERMES_INFERENCE_MODEL", "MiniMax-M3")
-    provider_flag = "custom:tokenrouter"
-    model_flag = "MiniMax-M3"
+    # Pass provider/model explicitly so oneshot does not auto-detect the model
+    # onto a broken or depleted provider.
+    provider_flag, model_flag = _apply_agent_provider_env(env)
     task = (
         f"Research the following topic thoroughly and save structured findings as a Markdown file.\n"
         f"Topic: {query}\n"
@@ -911,8 +1165,11 @@ async def create_research(payload: dict[str, Any]) -> JSONResponse:
             )
             rc = await proc.wait()
             log_fp.write(f"\n[research {research_id}] scholar exited rc={rc}\n".encode())
+            output_path = RESEARCH_DIR / filename
+            _update_research_status(research_id, "complete" if rc == 0 and output_path.is_file() else "failed")
         except Exception as e:  # never let the background task crash silently
             log_fp.write(f"\n[research {research_id}] spawn failed: {e!r}\n".encode())
+            _update_research_status(research_id, "failed")
         finally:
             log_fp.close()
 
@@ -933,13 +1190,7 @@ async def list_research() -> JSONResponse:
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
 
-    for row in rows:
-        if row["status"] == "researching":
-            filepath = RESEARCH_DIR / row["filename"]
-            if filepath.is_file():
-                row["status"] = "complete"
-                _update_research_status(row["id"], "complete")
-        row["ready"] = row["status"] == "complete"
+    rows = [_refresh_research_row_status(row) for row in rows]
 
     return JSONResponse({"items": rows})
 
@@ -959,12 +1210,8 @@ async def get_research(research_id: int) -> JSONResponse:
     if not row:
         raise HTTPException(status_code=404, detail="research not found")
 
-    data = dict(row)
+    data = _refresh_research_row_status(dict(row))
     filepath = RESEARCH_DIR / data["filename"]
-    data["ready"] = filepath.is_file()
-    if data["status"] == "researching" and data["ready"]:
-        data["status"] = "complete"
-        _update_research_status(research_id, "complete")
 
     content = ""
     if data["ready"]:
@@ -1838,6 +2085,85 @@ async def agents_analytics() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+@app.get("/api/omniroute/status")
+async def omniroute_status() -> JSONResponse:
+    """Return OmniRoute health and routing summary for the Agents page."""
+    started = time.monotonic()
+    base_api = OMNIROUTE_BASE_URL
+    root_url = OMNIROUTE_DASHBOARD_URL.rstrip("/")
+
+    status_data, _status_err, _status_rc = await _run_cmd_json(["omniroute", "status", "--output", "json"], timeout=10.0)
+    providers_data, providers_err, providers_rc = await _run_cmd_json(["omniroute", "providers", "list", "--json"], timeout=10.0)
+    nodes_out, nodes_err, nodes_rc = await _run_cmd_text(["omniroute", "nodes", "list", "--enabled"], timeout=10.0)
+
+    models_ok = False
+    models_count: int | None = None
+    models_error = ""
+    try:
+        req = urllib.request.Request(
+            f"{base_api}/models",
+            headers={"Accept": "application/json", "User-Agent": "mission-control/1.7"},
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
+            data = payload.get("data")
+            if isinstance(data, list):
+                models_count = len(data)
+                models_ok = True
+            else:
+                models_ok = resp.status < 400
+    except Exception as exc:
+        models_error = str(exc)
+
+    providers: list[dict[str, Any]] = []
+    raw_providers = providers_data
+    if isinstance(raw_providers, dict):
+        for key in ("providers", "connections", "data", "items"):
+            if isinstance(raw_providers.get(key), list):
+                raw_providers = raw_providers[key]
+                break
+    if isinstance(raw_providers, list):
+        for p in raw_providers[:24]:
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id") or p.get("name") or p.get("connectionId") or "").strip()
+            provider = str(p.get("provider") or p.get("type") or p.get("node") or "").strip()
+            enabled = p.get("enabled")
+            providers.append({
+                "id": pid,
+                "provider": provider,
+                "enabled": bool(enabled) if enabled is not None else True,
+                "status": p.get("status") or p.get("state") or "configured",
+            })
+
+    clean_nodes_out = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", nodes_out)
+    node_lines = [line.strip() for line in clean_nodes_out.splitlines() if line.strip() and "Loaded env from" not in line]
+    kimchi_present = "kimchi" in clean_nodes_out.lower() or any(
+        "kimchi" in f"{p.get('id', '')} {p.get('provider', '')}".lower()
+        for p in providers
+    )
+    ok = bool(status_data) and (models_ok or providers_rc == 0 or nodes_rc == 0)
+    return JSONResponse({
+        "ok": ok,
+        "base_url": base_api,
+        "dashboard_url": root_url,
+        "default_provider": DEFAULT_AGENT_PROVIDER,
+        "default_model": DEFAULT_AGENT_MODEL,
+        "omniroute_model": OMNIROUTE_DEFAULT_MODEL,
+        "models_ok": models_ok,
+        "models_count": models_count,
+        "models_error": models_error,
+        "status": status_data if isinstance(status_data, dict) else {},
+        "providers": providers,
+        "provider_count": len(providers),
+        "provider_error": providers_err if providers_rc not in (0, None) else "",
+        "nodes_preview": node_lines[:12],
+        "nodes_error": nodes_err if nodes_rc not in (0, None) else "",
+        "kimchi_present": kimchi_present,
+        "duration_ms": round((time.monotonic() - started) * 1000),
+    })
+
+
 @app.post("/api/agents/run")
 async def run_agent(payload: dict[str, Any]) -> JSONResponse:
     """Trigger a one-shot agent run. Body: {"agent": "...", "task": "...", "timeout": 600}."""
@@ -2078,8 +2404,7 @@ async def generate_subject_quiz(subject: str) -> JSONResponse:
     env["AGENT_LOG_DB"] = str(AGENT_LOG_DB)
     _inject_telegram_env(env)
     _hydrate_agent_env(env, PROFILES_DIR / "quizmaster")
-    env.setdefault("HERMES_INFERENCE_PROVIDER", "custom:tokenrouter")
-    env.setdefault("HERMES_INFERENCE_MODEL", "MiniMax-M3")
+    provider_flag, model_flag = _apply_agent_provider_env(env)
 
     if not HERMES_PYTHON.is_file():
         raise HTTPException(status_code=503, detail=f"hermes python not found: {HERMES_PYTHON}")
@@ -2088,8 +2413,8 @@ async def generate_subject_quiz(subject: str) -> JSONResponse:
         asyncio.create_subprocess_exec(
             str(HERMES_PYTHON), "-m", "hermes_cli.main",
             "-z", task,
-            "--provider", "custom:tokenrouter",
-            "--model", "MiniMax-M3",
+            "--provider", provider_flag,
+            "--model", model_flag,
             "--yolo", "--accept-hooks",
             env=env,
             stdout=asyncio.subprocess.DEVNULL,
@@ -2324,8 +2649,7 @@ async def generate_subject_flashcards(subject: str) -> JSONResponse:
     env["AGENT_LOG_DB"] = str(AGENT_LOG_DB)
     _inject_telegram_env(env)
     _hydrate_agent_env(env, PROFILES_DIR / "quizmaster")
-    env.setdefault("HERMES_INFERENCE_PROVIDER", "custom:tokenrouter")
-    env.setdefault("HERMES_INFERENCE_MODEL", "MiniMax-M3")
+    provider_flag, model_flag = _apply_agent_provider_env(env)
 
     if not HERMES_PYTHON.is_file():
         raise HTTPException(status_code=503, detail=f"hermes python not found: {HERMES_PYTHON}")
@@ -2334,8 +2658,8 @@ async def generate_subject_flashcards(subject: str) -> JSONResponse:
         asyncio.create_subprocess_exec(
             str(HERMES_PYTHON), "-m", "hermes_cli.main",
             "-z", task,
-            "--provider", "custom:tokenrouter",
-            "--model", "MiniMax-M3",
+            "--provider", provider_flag,
+            "--model", model_flag,
             "--yolo", "--accept-hooks",
             env=env,
             stdout=asyncio.subprocess.DEVNULL,

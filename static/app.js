@@ -170,6 +170,9 @@ window.app = function () {
     // ---------- live agents analytics ----------
     agentsAnalytics: null,
     agentFilter: "all",
+    omniRoute: null,
+    omniRouteLoading: false,
+    omniRouteError: "",
 
     // canonical agent palette — kept in sync with backend AGENT_REGISTRY
     AGENT_PALETTE: {
@@ -559,6 +562,7 @@ window.app = function () {
       await this.loadOverview();
       // pull agents analytics
       await this.loadAgents();
+      this.loadOmniRoute();
 
       // (1) small system-health badge in the topbar — best-effort, non-blocking.
       this.loadSystemSummary();
@@ -1120,6 +1124,8 @@ window.app = function () {
           if (found) {
             this.researchSelected.status = found.status;
             this.researchSelected.ready = found.ready;
+            this.researchSelected.log_path = found.log_path;
+            this.researchSelected.log_tail = found.log_tail;
           }
         }
         // Keep polling while any item is researching
@@ -1152,6 +1158,8 @@ window.app = function () {
         this.researchContent = this.renderMarkdown(j.content || "");
         this.researchSelected.status = j.status;
         this.researchSelected.ready = j.ready;
+        this.researchSelected.log_path = j.log_path;
+        this.researchSelected.log_tail = j.log_tail;
       } catch (e) { /* silent */ }
     },
 
@@ -1189,10 +1197,12 @@ window.app = function () {
     },
 
     researchStatusClass(item) {
+      if (item.status === "failed") return "failed";
       return item.status === "researching" ? "researching" : "complete";
     },
 
     researchStatusLabel(item) {
+      if (item.status === "failed") return "Failed";
       return item.status === "researching" ? "Researching…" : "Complete";
     },
 
@@ -1528,6 +1538,33 @@ window.app = function () {
       } catch (e) {
         console.warn("agents analytics load failed", e);
       }
+    },
+
+    async loadOmniRoute() {
+      this.omniRouteLoading = true;
+      this.omniRouteError = "";
+      try {
+        const data = await fetchWithAuth("/api/omniroute/status");
+        this.omniRoute = data;
+      } catch (e) {
+        this.omniRouteError = String(e && e.message ? e.message : e);
+      } finally {
+        this.omniRouteLoading = false;
+      }
+    },
+
+    omniRouteBadge() {
+      if (this.omniRouteLoading) return { text: "checking", cls: "standby" };
+      if (!this.omniRoute) return { text: "unknown", cls: "idle" };
+      if (this.omniRoute.ok && this.omniRoute.models_ok) return { text: "online", cls: "live" };
+      if (this.omniRoute.ok) return { text: "configured", cls: "standby" };
+      return { text: "issue", cls: "issue" };
+    },
+
+    omniRouteNodeText() {
+      const lines = this.omniRoute && Array.isArray(this.omniRoute.nodes_preview) ? this.omniRoute.nodes_preview : [];
+      if (!lines.length) return "No enabled nodes reported.";
+      return lines.join("\n");
     },
 
     // ── Agent network canvas ────────────────────────────────────────────────

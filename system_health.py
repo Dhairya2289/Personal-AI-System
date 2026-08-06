@@ -57,30 +57,22 @@ HOME = os.path.expanduser("~")
 HERMES = os.path.join(HOME, ".hermes")
 DASHBOARD = os.path.join(HOME, "dashboard")
 
-# systemd --user units to probe. kokoro-tts may be "not-found" on this box —
-# that is handled the same as any missing unit (active="inactive",
-# enabled="not-found"), never an error.
+# systemd --user units to probe.
 SERVICE_UNITS = [
     "mission-control",
-    "whisper-stt",
-    "kokoro-tts",
-    "syncthing",
     "hermes-backup.timer",
     "hypr-autopomodoro",
     "vault-reindex",
     "hermes-gateway",
     "hermes-gateway-dhairya",
+    "omniroute",
 ]
 
-# TCP listeners to ping. The dashboard binds MC_HOST (loopback by default, a
-# Tailscale IP for the author) — connect to that same address for its port.
+# TCP listeners to ping.
 TAILSCALE_IP = config.BIND_HOST
 LISTENERS = [
     {"name": "dashboard", "host": TAILSCALE_IP, "port": config.BIND_PORT},
-    {"name": "whisper", "host": "127.0.0.1", "port": 51764},
-    {"name": "kokoro", "host": "127.0.0.1", "port": 51765},
-    {"name": "ollama", "host": "127.0.0.1", "port": 11434},
-    {"name": "syncthing", "host": "127.0.0.1", "port": 8384},
+    {"name": "omniroute", "host": "127.0.0.1", "port": 20128},
 ]
 LISTENER_TIMEOUT = 0.4  # seconds per port
 
