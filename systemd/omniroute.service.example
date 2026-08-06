@@ -1,0 +1,12 @@
+[Unit]
+Description=OmniRoute AI Central Router
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omniroute --port 20128
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

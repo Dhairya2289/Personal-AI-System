@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""
+Universal Multi-Agent Memory Sync Engine
+Synchronizes memory facts across Claude, Codex, Gemini/Antigravity, Hermes, and Mission Control.
+"""
+import os
+import sqlite3
+
+def sync():
+    home = os.path.expanduser("~")
+    hermes_db = os.path.join(home, ".hermes", "memory_store.db")
+    if not os.path.exists(hermes_db):
+        print("Hermes database not found.")
+        return
+
+    conn = sqlite3.connect(hermes_db)
+    conn.row_factory = sqlite3.Row
+    facts = conn.execute("SELECT fact_id, category, content, created_at FROM facts ORDER BY fact_id DESC").fetchall()
+    conn.close()
+
+    lines = ["# 🧠 Universal Multi-Agent Memory Index\n"]
+    for f in facts[:100]:
+        lines.append(f"- **[{f['category'].upper()}]**: {f['content']} *({f['created_at']})*")
+
+    content = "\n".join(lines)
+
+    targets = [
+        os.path.join(home, ".claude", "MEMORY.md"),
+        os.path.join(home, ".codex", "MEMORY.md"),
+        os.path.join(home, ".gemini", "GEMINI.md"),
+        os.path.join(home, ".config", "ai-workspace", "memory", "MEMORY_INDEX.md")
+    ]
+
+    for t in targets:
+        os.makedirs(os.path.dirname(t), exist_ok=True)
+        with open(t, "w") as fp:
+            fp.write(content)
+
+    print("✅ Universal memory sync complete!")
+
+if __name__ == "__main__":
+    sync()

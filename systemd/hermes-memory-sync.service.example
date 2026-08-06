@@ -1,0 +1,7 @@
+[Unit]
+Description=Universal Multi-Agent Memory Synchronization Service
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/hermes-memory-sync

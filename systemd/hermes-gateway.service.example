@@ -1,0 +1,12 @@
+[Unit]
+Description=Hermes Multi-Agent Gateway Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/hermes gateway run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
