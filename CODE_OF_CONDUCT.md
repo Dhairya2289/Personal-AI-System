@@ -11,4 +11,4 @@ Examples of behavior that contributes to a positive environment for our communit
 * Accepting responsibility and apologizing to those affected by our mistakes
 
 ## Enforcement
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainer at `dhairya2289@gmail.com`.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainer at `dhairya9247@gmail.com`.
