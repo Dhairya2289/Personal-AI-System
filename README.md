@@ -57,42 +57,77 @@ Rather than starting from zero on every query, this system maintains a **living,
 ```mermaid
 flowchart TD
     subgraph Clients ["Client Experience Layer"]
-        UI["🖥️ Browser SPA (Volt OLED Lime)"]
-        BOT["🤖 Discord AI Bots (Personal & Study)"]
-        CLI_U["💻 Terminal CLI (Claude / Codex / Antigravity)"]
+        UI["Browser SPA (Volt OLED Lime)"]
+        BOT["Discord AI Bots (Personal & Study)"]
+        CLI_U["Terminal CLI (Claude / Codex / Antigravity)"]
     end
 
-    subgraph Core ["Hermes Mission Control Backend (:51763)"]
-        API["⚡ FastAPI Server (main.py)"]
-        TRK["📊 Academic Goal & Syllabus Tracker"]
-        RSR["🔬 Research Paper & Markdown Renderer"]
-        MEM["🧠 Universal Memory Bridge"]
-        HLT["🩺 Self-Healing Diagnostics Endpoint"]
+    subgraph Core ["Hermes Mission Control Backend (Port 51763)"]
+        API["FastAPI Server (main.py)"]
+        TRK["Academic Goal & Syllabus Tracker"]
+        RSR["Research Paper & Markdown Renderer"]
+        MEM["Universal Memory Bridge"]
+        HLT["Self-Healing Diagnostics Endpoint"]
     end
 
-    subgraph Memory ["Universal Memory Engine"]
-        MDB[("🗄️ Hermes Memory Store (260+ Facts)")]
-        SYNC["🔄 sys-engine memory sync"]
-        CL_M["📄 Claude MEMORY.md"]
-        CX_M["📄 Codex MEMORY.md"]
-        GM_M["📄 Gemini GEMINI.md"]
+    subgraph MemoryEngine ["Universal Memory Engine"]
+        MDB["Hermes Memory Store (260+ Facts)"]
+        SYNC["sys-engine memory sync"]
+        CL_M["Claude MEMORY.md"]
+        CX_M["Codex MEMORY.md"]
+        GM_M["Gemini GEMINI.md"]
     end
 
-    subgraph Routing ["OmniRoute API Router (:20128)"]
-        OM["🌐 OmniRoute Central Gateway"]
-        AGY["⚡ 9 Antigravity Accounts"]
-        KMC["🔑 11 Kimchi Provider Keys"]
+    subgraph Routing ["OmniRoute API Router (Port 20128)"]
+        OM["OmniRoute Central Gateway"]
+        AGY["9 Antigravity Accounts"]
+        KMC["11 Kimchi Provider Keys"]
     end
 
-    UI -->|REST / WebSockets| API
-    BOT -->|Discord Gateway| MDB
-    CLI_U -->|Terminal Commands| API
-    API --> TRK & RSR & MEM & HLT
+    UI --> API
+    BOT --> MDB
+    CLI_U --> API
+
+    API --> TRK
+    API --> RSR
+    API --> MEM
+    API --> HLT
+
     MEM --> MDB
-    MDB <--> SYNC
-    SYNC <--> CL_M & CX_M & GM_M
-    API -->|LLM Requests| OM
-    OM --> AGY & KMC
+    MDB --> SYNC
+    SYNC --> CL_M
+    SYNC --> CX_M
+    SYNC --> GM_M
+
+    API --> OM
+    OM --> AGY
+    OM --> KMC
+```
+
+### 🖥️ Text Architecture Overview
+
+```
++-----------------------------------------------------------------------------------+
+|                            CLIENT EXPERIENCE LAYER                                |
+|  [ Browser SPA (Volt OLED Lime) ]   [ Discord AI Bots ]   [ Terminal CLI Agents ] |
++--------------------------------─────────┬────────────────────────────────---------+
+                                          | REST / WebSockets / IPC
+                                          v
++-----------------------------------------------------------------------------------+
+|                    MISSION CONTROL FASTAPI BACKEND (:51763)                       |
+|  [ Syllabus Tracker ]  [ Research Paper Renderer ]  [ Memory Bridge ]  [ Health ] |
++--------------------------------─────────┬────────────────────────────────---------+
+                                          |
+                   +----------------------+----------------------+
+                   |                                             |
+                   v                                             v
++------------------------------------+        +------------------------------------+
+|      UNIVERSAL MEMORY ENGINE       |        |     OMNIROUTE API ROUTER (:20128)   |
+| [ Hermes DB (260+ Facts) ]         |        | [ Central Gateway Router ]         |
+|      |                             |        |      |                             |
+|      v (sys-engine memory sync)    |        |      +---> [ 9 Antigravity Accounts]|
+| [ Claude ]  [ Codex ]  [ Gemini ]  |        |      +---> [ 11 Kimchi Keys ]      |
++------------------------------------+        +------------------------------------+
 ```
 
 ---
