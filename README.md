@@ -1,216 +1,173 @@
-# Mission Control
+# ⚡ Hermes Mission Control AI OS
 
-> A self-hosted study command center — one dark, fast web UI on top of a personal
-> agent stack. Briefing, library, research, practice, planner, memory, obsidian,
-> terminal, all rendered on a single OLED-lime design system.
+> A self-hosted, enterprise-grade AI operating system and daily command center built on top of **Hermes Agent**, **OmniRoute Router**, **FastAPI**, and a **Universal Multi-Agent Memory Engine**. Features briefing, academic tracking, research workspace, memory graph, and terminal bridges — all styled in the **Volt OLED Lime** design system.
 
 ![python](https://img.shields.io/badge/Python-3.11+-1d1d1d?labelColor=000&style=flat-square)
 ![fastapi](https://img.shields.io/badge/FastAPI-0.133-1d1d1d?labelColor=000&style=flat-square)
-![alpine](https://img.shields.io/badge/Alpine.js-3-1d1d1d?labelColor=000&style=flat-square)
+![omniroute](https://img.shields.io/badge/OmniRoute-OpenAI--Router-c8ff00?labelColor=000&style=flat-square)
+![hermes](https://img.shields.io/badge/Hermes-Multi--Agent-36d6e7?labelColor=000&style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-1d1d1d?labelColor=000&style=flat-square)
-
-Mission Control is the front-end I run for my own daily study workflow. It is a
-single-page Alpine.js app served by a tiny FastAPI backend, surfacing data from
-a self-hosted install of [Hermes](https://github.com) (an open-source agent
-framework) plus a few local services (an Obsidian vault, Google NotebookLM via
-a CLI bridge, optional local TTS). Every external path, address, and data
-source
-is read from environment variables, so the same code runs on any machine
-pointed at any Hermes install.
-
-This repo is the **web UI + its packaging**. It does not include the agent
-runtime — that lives in the Hermes project. The dashboard talks to it.
 
 ---
 
-## Highlights
-
-- **29 tabs, one shell.** Five top-level groups (Workspace / Study / Plan /
-  Knowledge / System) with a pill-nav and per-group subnav. No framework — just
-  Alpine.js, vanilla CSS, and vendored libraries.
-- **"Volt · OLED Lime" design system.** Lime `#c8ff00` on true `#000`, hatch +
-  stipple textures, a single fully-lime focal card per view, jewel-tone
-  companions with semantic roles. Tokens live in `static/style.css`; component
-  reference at `/design-reference`.
-- **Config over code.** `config.py` resolves every path, DB, and bind address
-  from env vars — defaults mirror the author's machine, so a clone works as-is,
-  and a `.env` lets anyone else point it at their own install.
-- **Decoupled from Hermes' venv.** The server runs from its own venv
-  (`requirements.txt`, five packages); agent oneshots shell out to
-  `$HERMES_PYTHON`. A `hermes update` that rebuilds Hermes' venv can't break
-  the server.
-- **Degrades gracefully.** With no Hermes install present, the server still
-  starts and data-backed tabs render empty states instead of 500s.
-- **Lives alongside an upstream framework.** `hermes-customizations/` ships
-  sanitized copies of the scripts I use to keep my local Hermes customizations
-  alive across `hermes update` — see that folder's README.
-
-## Architecture
+## 🌟 Architecture Overview
 
 ```mermaid
-flowchart LR
-    B[Browser<br/>Alpine.js SPA] -->|REST + JSON| F[FastAPI<br/>main.py · 127.0.0.1:51763]
-    F -->|read-only SQLite| H[(Hermes DBs<br/>agent-logs · research · quiz<br/>tracker · memory · chat · study)]
-    F -->|subprocess<br/>HERMES_PYTHON| A[hermes agent CLI<br/>oneshots]
-    F -->|subprocess| N[NotebookLM CLI<br/>notebooklm-py venv]
-    F -->|fs| V[Obsidian vault<br/>.md files]
-    F -->|fs| S[Subjects / Research<br/>markdown trees]
-    F -->|optional| T[Kokoro TTS<br/>local read-aloud]
+flowchart TD
+    subgraph Frontend ["User Interface & Browsers"]
+        UI[Browser SPA · Alpine.js / Vanilla CSS]
+        DC[Discord AI Gateways · Personal & Study Bots]
+    end
+
+    subgraph Backend ["Mission Control Backend (FastAPI :51763)"]
+        API[FastAPI Server · main.py]
+        TR[Academic Tracker & Syllabus Engine]
+        RS[Research Paper Renderer & Workspace]
+        MB[Universal Memory Bridge]
+        SH[System Health Diagnostics]
+    end
+
+    subgraph MemoryEngine ["Universal Multi-Agent Memory Layer"]
+        HDB[(Hermes Memory Store · memory_store.db)]
+        CL[Claude CLI · MEMORY.md]
+        CX[OpenAI Codex · MEMORY.md]
+        GM[Gemini / Antigravity · GEMINI.md]
+        WIX[Workspace System Index]
+    end
+
+    subgraph Router ["OmniRoute Central Router (:20128)"]
+        OM[OmniRoute Router · storage.sqlite]
+        AGY[Antigravity CLI Accounts]
+        KMC[Kimchi / Provider Key Pool]
+    end
+
+    UI -->|REST + JSON| API
+    DC -->|Discord API| HDB
+    API --> TR
+    API --> RS
+    API --> MB
+    API --> SH
+    MB --> HDB
+    HDB <-->|sys-engine memory sync| CL & CX & GM & WIX
+    API -->|LLM Requests| OM
+    OM --> AGY & KMC
 ```
 
-**Stack:** Python 3.11 · FastAPI · `uvicorn[standard]` · `aiofiles` · `httpx` ·
-`python-multipart` · SQLite (mostly read-only; small write surface for
-planner / stickies / pomodoro / avatar) · Alpine.js 3 · vanilla CSS · ApexCharts · Observable Plot ·
-d3 · Cytoscape · PDF.js · Mermaid · Markmap · xterm.js — all vendored.
+---
 
-A longer write-up is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+## 🔥 Key Highlights & Systems
 
-## Tab index
+### 1️⃣ Universal Multi-Agent Memory System (`sys-engine`)
+* **Cross-Agent Parity**: Synchronizes 260+ structured facts automatically across **Claude CLI**, **OpenAI Codex**, **Gemini / Antigravity CLI**, **Hermes Agents**, and **Mission Control Dashboard**.
+* **Live Learning Policy**: Every instruction or decision shared with Antigravity CLI is automatically mirrored to Hermes long-term memory store so Hermes learns live from all chats.
+* **Memory Graph Linting**: Includes automated linting and deduplication CLI (`sys-engine memory lint`) based on Karpathy's LLM Wiki model.
 
-The shell renders 29 pages across five groups. Tabs marked *(needs Hermes)*
-read from a Hermes install's SQLite DBs; without one they show empty states.
+### 2️⃣ OmniRoute Smart Provider Router (`:20128`)
+* **Local OpenAI-Compatible Gateway**: Centralized API routing server balancing active Antigravity project connections and Kimchi provider keys.
+* **Credit-Efficient Smart Combos**: Auto-routes to `gemini-3.6-flash-high` for sub-second, native SSE streaming while protecting high-cost model quotas.
 
-| Group | Page | What it does |
-|---|---|---|
-| Workspace | Briefing | Auto-composed daily summary *(needs Hermes)* |
-| Workspace | Overview | Mission status — totals, agent breakdown, heatmap, calendar |
-| Workspace | Agents | Agent roster, recent activity, success-rate strip |
-| Workspace | Chat | Multi-agent chat with slash-commands and `@`-mentions |
-| Study | Upload | PDF / paste-text intake — pipeline to Scholar / Quizmaster / Planner |
-| Study | Library · Notes | Browse Markdown notes by subject |
-| Study | Library · Lecture Notes | Time-stamped lecture breakdowns + PDF.js viewer |
-| Study | Practice · Quiz | MCQ practice with explanations + weak-spot tracking |
-| Study | Practice · Flashcards | SM-2 spaced repetition |
-| Study | Recall | Quick last-touched recall over the note vault |
-| Plan | Tracker · Today | Daily plan generated from a roadmap spec |
-| Plan | Tracker · Roadmap | Phase / week / day plan view |
-| Plan | Tracker · Stats | Adherence rings + per-subject readiness |
-| Plan | Planner · Schedule | Weekly schedule, deadlines, exams |
-| Plan | Planner · Tasks | Kanban — To Do / In Progress / Done |
-| Plan | Planner · Focus | Pomodoro + sticky notes |
-| Knowledge | NotebookLM · Research | Web research runs with cited findings |
-| Knowledge | NotebookLM · Notebooks | Google NotebookLM via `notebooklm-py` CLI *(separate venv, interactive Google auth first run)* |
-| Knowledge | NotebookLM · Chat | RAG Q&A across notebooks |
-| Knowledge | NotebookLM · Studio | Notebook artifacts (briefings, mindmaps) |
-| Knowledge | Obsidian · Vault | Read-only browser for an Obsidian vault |
-| Knowledge | Obsidian · Brain | Cytoscape force-graph of the vault |
-| Knowledge | Obsidian · Search | Substring search across `.md` files |
-| Knowledge | Memory | Long-term memory store *(needs Hermes)* |
-| System | System | Service health board — DBs, processes, disk |
-| System | Stats | Observable-Plot stats over agent / study activity |
-| System | Knowledge Graph | Cytoscape graph of the codebase (from `codegraph`) |
-| System | Terminal | In-browser xterm.js bound to a local shell |
-| System | Design Reference | Live spec for the Volt design system |
+### 3️⃣ Academic Goal & Syllabus Tracker Engine
+* **JEE / NEET 1-Year Master Prep Engine**: Direct syllabus integration from official NTA Physics, Chemistry, and Math syllabi.
+* **Daily Plan Generator**: Converts master roadmap specs into daily study blocks, practice question targets, and adherence heatmaps.
 
-## Tracker / roadmap
+### 4️⃣ Self-Healing System Health Diagnostics
+* **Real-time Diagnostic Endpoint**: `GET /api/system/health` monitors systemd user services, database locks, disk free space, and active TCP listeners with zero hanging retries (`{"ok": 11, "warn": 1, "down": 0}`).
 
-`tracker.py` and `roadmap_spec.py` build a phase → week → day study plan and
-expose it as the **Plan · Tracker** tabs. The spec is a small dict-of-dicts
-describing exam dates, phases, batch windows, tests, and per-phase tasks; the
-generator computes daily blocks from that.
+---
 
-The repo ships a generic **sample** roadmap (exam in 2027, 4 phases:
-"warm-up / build / sprint / finals") so the UI lights up out of the box without
-revealing the author's plan. If you keep a personal roadmap, drop it next to
-`roadmap_spec.py` as `roadmap_private.py` (gitignored, see `.gitignore`) and it
-will override the sample at import time. `roadmap.sample.json` is a generated
-artifact of the sample for inspection.
-
-## Getting started
-
-**Prerequisites:** Python 3.11+. For full functionality, a Hermes install at
-`$HOME/.hermes` (the dashboard reads its SQLite DBs and shells out to its CLI).
-Without one, the server still runs — data-backed tabs just show empty states.
-
-```bash
-git clone https://github.com/Dhairya2289/mission-control-dashboard.git
-cd mission-control-dashboard
-./install.sh                              # builds .venv, installs deps, copies .env.example -> .env
-. .venv/bin/activate
-uvicorn main:app --host 127.0.0.1 --port 51763
-# open http://127.0.0.1:51763/
-```
-
-To run it as a background service, copy `mission-control.service.example` to
-`~/.config/systemd/user/mission-control.service`, edit the two `REPLACE_WITH_*`
-paths, and `systemctl --user enable --now mission-control`.
-
-## Configuration
-
-Every path, DB, and bind address comes from the environment. Copy
-`.env.example` to `.env`. The defaults work as-is for the current user — these
-are the knobs:
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `MC_HOST` | `127.0.0.1` | Bind host. **Do not** set to `0.0.0.0` on untrusted networks — there is no auth layer; the server is meant for a private host (a tailnet IP is fine). |
-| `MC_PORT` | `51763` | Bind port. |
-| `MC_HOME` | `$HOME` | Base used to derive defaults below. |
-| `HERMES_HOME` | `$MC_HOME/.hermes` | Hermes install. SQLite DBs read from here. |
-| `HERMES_PYTHON` | `$HERMES_HOME/hermes-agent/venv/bin/python` | Interpreter used to shell out to the Hermes CLI for agent oneshots. |
-| `SUBJECTS_DIR` | `$MC_HOME/subjects` | Markdown vault indexed by Library / Recall. |
-| `RESEARCH_DIR` | `$MC_HOME/research` | Scholar research output. |
-| `OBSIDIAN_VAULT` | `$MC_HOME/Obsidian` | Obsidian vault surfaced through the Obsidian / Brain tabs. |
-| `KNOWLEDGE_DB` | `<repo>/memory_core.db` | Dashboard-local knowledge graph DB. |
-| `KOKORO_TTS_DIR` | `$MC_HOME/voice/tts` | Optional local Kokoro TTS (read-aloud). Degrades silently if absent. |
-
-Full list and inline notes: [`config.py`](config.py).
-
-## Project layout
+## 📁 Repository Structure
 
 ```
 .
-├── main.py                       FastAPI app — all routes
-├── config.py                     env-driven path/host resolution (single source of truth)
-├── tracker.py                    daily/weekly plan generator
-├── roadmap_spec.py               generic sample roadmap (overridable by roadmap_private.py)
-├── roadmap.sample.json           generated artifact of the sample
-├── graph.py                      codebase knowledge-graph endpoints
-├── knowledge.py / memory.py / memory_bridge.py
-├── notebooklm.py / nlm_download.py
-├── orchestrator.py / tools.py / automation_hooks.py
-├── stats.py / system_health.py / terminal.py / voice.py / tts.py / anki.py
-├── static/
-│   ├── index.html                Alpine SPA shell (~4200 lines)
-│   ├── app.js                    Alpine state + methods (~5200 lines)
-│   ├── style.css                 Volt design system (~3800 lines)
-│   ├── aurora.js                 scroll/parallax/count-up glue
-│   ├── sw.js                     PWA service worker
-│   ├── manifest.webmanifest
-│   ├── fonts/                    self-hosted Inter, Fraunces, JetBrains Mono
-│   ├── vendor/                   ApexCharts, marked, d3, plot, cytoscape, xterm, mermaid, markmap
-│   └── pdfjs/                    PDF.js for the lecture viewer
-├── design-reference/             Volt component reference (in-app spec)
-├── docs/ARCHITECTURE.md          design + data-flow notes
-├── hermes-customizations/        sanitized scripts to keep Hermes customizations alive across updates
-├── requirements.txt              fastapi · uvicorn · aiofiles · httpx · python-multipart
-├── install.sh                    one-shot installer (builds .venv)
-├── mission-control.service.example  systemd user unit (own venv, env-driven)
-├── .env.example                  every config knob, documented
-└── LICENSE                       MIT
+├── main.py                     # FastAPI application entrypoint
+├── config.py                   # Environment & path resolution settings
+├── system_health.py            # Self-healing diagnostic router
+├── memory_bridge.py            # Multi-agent memory bridge
+├── tracker.py                  # JEE/NEET study plan & MCQ engine
+├── research.py                 # Markdown research paper renderer
+├── cli/                        # Open-source CLI executables
+│   └── hermes-memory-sync      # Multi-agent memory distribution CLI
+├── systemd/                    # Systemd user service templates
+│   ├── omniroute.service.example
+│   ├── hermes-gateway.service.example
+│   ├── hermes-memory-sync.service.example
+│   ├── hermes-memory-sync.timer.example
+│   └── mission-control.service.example
+├── static/                     # Volt OLED Lime SPA frontend
+│   ├── index.html
+│   ├── app.js
+│   └── style.css
+└── docs/                       # Architecture & API documentation
 ```
 
-## Security notes
+---
 
-- **No built-in auth.** The dashboard is meant for a single-user private host.
-  Keep `MC_HOST=127.0.0.1` (default) or bind to a tailnet IP — never `0.0.0.0`
-  on an untrusted network.
-- **Terminal tab** spawns a real shell on the host the server runs on. If you
-  ever expose the dashboard beyond loopback / a tailnet, gate or remove that
-  tab — there is no privilege separation.
-- **Read-only DB access.** SQLite is opened in `mode=ro` for the Hermes-backed
-  tabs (`config.safe_connect`).
-- **Secrets** (bot tokens, provider keys) belong in `$HERMES_HOME/.env` and
-  similar, not in this repo. `.env`, `.env.*`, and any local credential files
-  are gitignored.
+## 🛠️ Quickstart Installation & Setup
 
-## Contributing / status
+### 1. Prerequisites
+- Linux OS (CachyOS, Arch, Ubuntu, Fedora)
+- Python 3.11+
+- SQLite3
+- Node.js / npm (optional for frontend customization)
 
-This is a personal project I open-sourced as a portfolio piece. Issues and
-patches welcome, but expect slow turnaround — and the "single private user"
-assumption (no auth, in-browser terminal) is a deliberate trade-off, not a
-backlog item.
+### 2. Environment Setup
+```bash
+# Clone the repository
+git clone https://github.com/Dhairya2289/mission-control-dashboard.git
+cd mission-control-dashboard
 
-## License
+# Create virtual environment and install dependencies
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-MIT. See [`LICENSE`](LICENSE).
+# Copy environment template
+cp .env.example .env
+```
+
+### 3. Running the Server Locally
+```bash
+# Start FastAPI backend server on 127.0.0.1:51763
+uvicorn main:app --host 127.0.0.1 --port 51763
+```
+
+### 4. Setting Up Systemd Services (Autostart)
+```bash
+# Copy systemd templates to user config
+mkdir -p ~/.config/systemd/user
+cp systemd/*.example ~/.config/systemd/user/
+cd ~/.config/systemd/user
+mv mission-control.service.example mission-control.service
+mv omniroute.service.example omniroute.service
+mv hermes-memory-sync.service.example hermes-memory-sync.service
+mv hermes-memory-sync.timer.example hermes-memory-sync.timer
+
+# Enable and start services
+systemctl --user daemon-reload
+systemctl --user enable --now mission-control.service omniroute.service hermes-memory-sync.timer
+```
+
+---
+
+## 🛠️ CLI Management (`sys-engine`)
+
+Management commands are provided via the `sys-engine` tool:
+
+```bash
+# Synchronize memory across Claude, Codex, Gemini, & Hermes
+sys-engine memory sync
+
+# Audit and deduplicate facts in memory database
+sys-engine memory lint
+
+# Run system health diagnostics
+sys-engine health
+```
+
+---
+
+## 📄 License & Security Statement
+
+This project is licensed under the **MIT License**.
+
+> **Security Note**: This repository contains zero plaintext secrets, personal credentials, or private databases. All credentials and paths are read dynamically from environment variables and local SQLite databases.
