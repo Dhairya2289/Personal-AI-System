@@ -1,87 +1,59 @@
-<div align="center">
+# Personal AI System (Hermes Mission Control)
 
-# ⚡ HERMES MISSION CONTROL AI OS
-### *The Self-Hosted, Compounding Personal AI Operating System*
+A self-hosted, multi-agent operating environment and daily workflow dashboard built on top of Hermes Agent, OmniRoute Router, FastAPI, and a Universal Multi-Agent Memory Engine.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-1d1d1d?style=for-the-badge&logo=python&logoColor=c8ff00)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.133-1d1d1d?style=for-the-badge&logo=fastapi&logoColor=0055ff)](https://fastapi.tiangolo.com)
-[![OmniRoute](https://img.shields.io/badge/OmniRoute-Router-1d1d1d?style=for-the-badge&logo=openai&logoColor=c8ff00)](https://github.com)
-[![Hermes](https://img.shields.io/badge/Hermes-Multi--Agent-1d1d1d?style=for-the-badge&logo=discord&logoColor=36d6e7)](https://github.com)
-[![License](https://img.shields.io/badge/License-MIT-1d1d1d?style=for-the-badge&logo=open-source-initiative&logoColor=2be08a)](LICENSE)
-
-*Stop rediscovering context from scratch on every query. Compile your knowledge, load-balance your LLM API models, and manage your life with a persistent, multi-agent AI environment.*
-
-[Architecture](#-system-architecture) • [Features](#-key-capabilities) • [Quickstart](#-quickstart-installation) • [CLI Management](#-sys-engine-cli)
+[![Python](https://img.shields.io/badge/Python-3.11+-1d1d1d?style=flat-square)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.133-1d1d1d?style=flat-square)](https://fastapi.tiangolo.com)
+[![OmniRoute](https://img.shields.io/badge/OmniRoute-Router-1d1d1d?style=flat-square)](https://github.com/Dhairya2289/Personal-AI-System)
+[![Hermes](https://img.shields.io/badge/Hermes-Multi--Agent-1d1d1d?style=flat-square)](https://github.com/Dhairya2289/Personal-AI-System)
+[![License](https://img.shields.io/badge/License-MIT-1d1d1d?style=flat-square)](LICENSE)
 
 ---
 
-</div>
+## Overview
 
-## 🌌 Why Hermes Mission Control?
+Personal AI System provides a unified web interface, background services, and multi-agent memory infrastructure. Instead of isolated chat sessions that lose context, the environment compiles structured memories across multiple AI agent runtimes into a persistent SQLite memory store and distributes them across provider memory files.
 
-Most people's workflow with AI models looks like a repetitive loop of **query-time RAG**: you open a chat window, upload files, get an answer, and close the session. The model forgets everything. Every complex question forces the AI to rediscover knowledge from scratch.
+### Core Modules
 
-**Hermes Mission Control AI OS** inverts this pattern based on Andrej Karpathy's persistent knowledge base model:
-
-> *"Obsidian is the IDE; the LLM is the programmer; the wiki is the codebase."*
-
-Rather than starting from zero on every query, this system maintains a **living, compounding knowledge lattice** across **Claude CLI**, **OpenAI Codex**, **Gemini / Antigravity**, and **Hermes Agents**. Every breakthrough, study block, research paper, and system decision is extracted, synthesized, and permanently synchronized.
-
----
-
-## ⚡ Key Capabilities
-
-### 🧠 1. The Brain Lattice (Universal Multi-Agent Memory)
-* **Cross-Agent Memory Parity**: One centralized SQLite memory engine (`~/.hermes/memory_store.db`) synchronizing 260+ structured facts across all CLI tools (`Claude`, `Codex`, `Gemini`), Hermes Discord bots, and the web UI.
-* **Live Chat Learning**: Every decision or instruction shared in terminal chat is automatically extracted into long-term memory so the AI stack evolves live.
-* **Karpathy Knowledge Graph Linting**: Includes automated memory linting (`sys-engine memory lint`) to prune duplicate facts, resolve entity references, and prevent context rot.
-
-### 🌐 2. OmniRoute AI Central Router (`:20128`)
-* **On-Device OpenAI-Compatible Router**: Load-balances requests across 9 Antigravity project accounts and 11 Kimchi API keys.
-* **Credit-Shield Combos**: Automatically routes heavy workloads to high-efficiency streaming models (`gemini-3.6-flash-high`) while protecting quota-limited models.
-
-### 🎓 3. Academic Goal & Syllabus Vector Engine
-* **JEE / NEET Master Syllabi Integration**: Direct integration with official NTA Physics, Chemistry, and Math syllabi weightages.
-* **Adherence Heatmaps**: Real-time daily study block tracking, MCQ practice targets, and subject readiness rings.
-
-### 🔬 4. The Paper Matrix (Research Workspace)
-* **Interactive Markdown Renderer**: Native renderer for deep research papers, mathematical derivations, and multi-disciplinary briefs without browser bloat.
-
-### 🎨 5. Volt OLED Lime Design System
-* **Hardware-Accelerated Dark UI**: Deep OLED `#000000` background with Volt Lime (`#c8ff00`) focal cards, smooth micro-interactions, and zero visual contrast bugs.
+* **Universal Multi-Agent Memory (`sys-engine memory`)**: Synchronizes structured facts across Claude CLI, OpenAI Codex, Gemini / Antigravity CLI, Hermes Agents, and the local FastAPI backend.
+* **OmniRoute Gateway (`:20128`)**: Local OpenAI-compatible API router that load-balances requests across account credentials and provider pools with fallback strategies.
+* **Academic Goal & Syllabus Engine**: Integrates NTA Physics, Chemistry, and Mathematics syllabi weightages to compute daily study blocks, practice question targets, and adherence stats.
+* **Research Paper Module**: Rendered Markdown viewer for technical documents, paper summaries, and derivations.
+* **System Health Diagnostics (`/api/system/health`)**: Aggregates systemd user service states, process locks, disk free space, and active TCP listeners without blocking or connection timeouts.
 
 ---
 
-## 📐 System Architecture
+## System Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Clients ["Client Experience Layer"]
-        UI["Browser SPA (Volt OLED Lime)"]
-        BOT["Discord AI Bots (Personal & Study)"]
+    subgraph Clients ["Client Layer"]
+        UI["Browser SPA (FastAPI / Alpine.js)"]
+        BOT["Discord AI Gateways"]
         CLI_U["Terminal CLI (Claude / Codex / Antigravity)"]
     end
 
-    subgraph Core ["Hermes Mission Control Backend (Port 51763)"]
+    subgraph Core ["Backend Engine (Port 51763)"]
         API["FastAPI Server (main.py)"]
-        TRK["Academic Goal & Syllabus Tracker"]
-        RSR["Research Paper & Markdown Renderer"]
+        TRK["Academic Syllabus Tracker"]
+        RSR["Research Paper Renderer"]
         MEM["Universal Memory Bridge"]
-        HLT["Self-Healing Diagnostics Endpoint"]
+        HLT["System Diagnostics"]
     end
 
-    subgraph MemoryEngine ["Universal Memory Engine"]
-        MDB["Hermes Memory Store (260+ Facts)"]
+    subgraph MemoryEngine ["Memory Layer"]
+        MDB["Hermes Memory Store (memory_store.db)"]
         SYNC["sys-engine memory sync"]
         CL_M["Claude MEMORY.md"]
         CX_M["Codex MEMORY.md"]
         GM_M["Gemini GEMINI.md"]
     end
 
-    subgraph Routing ["OmniRoute API Router (Port 20128)"]
+    subgraph Routing ["API Router (Port 20128)"]
         OM["OmniRoute Central Gateway"]
-        AGY["9 Antigravity Accounts"]
-        KMC["11 Kimchi Provider Keys"]
+        AGY["Antigravity CLI Credentials"]
+        KMC["Provider Key Pool"]
     end
 
     UI --> API
@@ -104,51 +76,51 @@ flowchart TD
     OM --> KMC
 ```
 
-### 🖥️ Text Architecture Overview
-
 ```
 +-----------------------------------------------------------------------------------+
-|                            CLIENT EXPERIENCE LAYER                                |
-|  [ Browser SPA (Volt OLED Lime) ]   [ Discord AI Bots ]   [ Terminal CLI Agents ] |
+|                                  CLIENT LAYER                                     |
+|  [ Browser SPA ]             [ Discord Gateways ]           [ Terminal CLI ]      |
 +--------------------------------─────────┬────────────────────────────────---------+
-                                          | REST / WebSockets / IPC
+                                          | REST / IPC
                                           v
 +-----------------------------------------------------------------------------------+
-|                    MISSION CONTROL FASTAPI BACKEND (:51763)                       |
-|  [ Syllabus Tracker ]  [ Research Paper Renderer ]  [ Memory Bridge ]  [ Health ] |
+|                        FASTAPI BACKEND ENGINE (:51763)                            |
+|  [ Syllabus Tracker ]  [ Research Renderer ]  [ Memory Bridge ]  [ Diagnostics ]  |
 +--------------------------------─────────┬────────────────────────────────---------+
                                           |
                    +----------------------+----------------------+
                    |                                             |
                    v                                             v
 +------------------------------------+        +------------------------------------+
-|      UNIVERSAL MEMORY ENGINE       |        |     OMNIROUTE API ROUTER (:20128)   |
-| [ Hermes DB (260+ Facts) ]         |        | [ Central Gateway Router ]         |
+|          MEMORY ENGINE             |        |       OMNIROUTE ROUTER (:20128)    |
+| [ Hermes DB (memory_store.db) ]    |        | [ Central Gateway Router ]         |
 |      |                             |        |      |                             |
-|      v (sys-engine memory sync)    |        |      +---> [ 9 Antigravity Accounts]|
-| [ Claude ]  [ Codex ]  [ Gemini ]  |        |      +---> [ 11 Kimchi Keys ]      |
+|      v (sys-engine memory sync)    |        |      +---> [ Antigravity Accounts ]|
+| [ Claude ]  [ Codex ]  [ Gemini ]  |        |      +---> [ Provider Key Pool ]   |
 +------------------------------------+        +------------------------------------+
 ```
 
 ---
 
-## 📂 System Directory Structure
+## Directory Structure
 
 ```
+.
 ├── main.py                     # FastAPI application entrypoint
-├── config.py                   # Dynamic environment & path resolution
-├── system_health.py            # Self-healing system diagnostic router
-├── memory_bridge.py            # Universal multi-agent memory bridge
-├── tracker.py                  # JEE/NEET study plan & MCQ engine
-├── research.py                 # Markdown research paper renderer
-├── cli/                        # System CLI executables
-│   └── hermes-memory-sync      # Multi-agent memory sync engine
-├── systemd/                    # Systemd user autostart templates
+├── config.py                   # Path and environment resolution
+├── system_health.py            # Self-healing diagnostic router
+├── memory_bridge.py            # Multi-agent memory bridge
+├── tracker.py                  # Syllabus plan and practice engine
+├── research.py                 # Markdown research paper module
+├── cli/                        # Executable CLI tools
+│   └── hermes-memory-sync      # Memory sync executable
+├── systemd/                    # Systemd user service templates
 │   ├── omniroute.service.example
 │   ├── hermes-gateway.service.example
+│   ├── hermes-memory-sync.service.example
 │   ├── hermes-memory-sync.timer.example
 │   └── mission-control.service.example
-└── static/                     # Volt OLED Lime SPA frontend
+└── static/                     # Web UI static assets
     ├── index.html
     ├── app.js
     └── style.css
@@ -156,79 +128,64 @@ flowchart TD
 
 ---
 
-## 🛠️ Quickstart Installation
+## Installation & Setup
 
-### 1. Requirements
+### Prerequisites
 * Linux (CachyOS, Arch, Ubuntu, Fedora)
-* Python 3.11+ & SQLite3
-* `systemd` (user-session enabled)
+* Python 3.11+
+* SQLite3
+* `systemd` (user-session support)
 
-### 2. Installation Steps
+### Installation
 ```bash
-# Clone the repository
-git clone https://github.com/Dhairya2289/mission-control-dashboard.git
-cd mission-control-dashboard
+git clone https://github.com/Dhairya2289/Personal-AI-System.git
+cd Personal-AI-System
 
-# Create Python virtual environment & install requirements
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# Copy environment template
 cp .env.example .env
 ```
 
-### 3. Launching the Dashboard
+### Running Locally
 ```bash
-# Start FastAPI backend server on localhost:51763
 uvicorn main:app --host 127.0.0.1 --port 51763
 ```
 
-### 4. Enabling Background Autostart Services
+### Systemd User Services Setup
 ```bash
-# Install systemd user service templates
 mkdir -p ~/.config/systemd/user
 cp systemd/*.example ~/.config/systemd/user/
 cd ~/.config/systemd/user
 mv mission-control.service.example mission-control.service
 mv omniroute.service.example omniroute.service
+mv hermes-memory-sync.service.example hermes-memory-sync.service
 mv hermes-memory-sync.timer.example hermes-memory-sync.timer
 
-# Enable & activate services
 systemctl --user daemon-reload
 systemctl --user enable --now mission-control.service omniroute.service hermes-memory-sync.timer
 ```
 
 ---
 
-## 🕹️ `sys-engine` CLI Commands
+## CLI Management (`sys-engine`)
 
-Manage memory, run health checks, and execute graph linting with the unified CLI:
+The `sys-engine` tool manages background memory operations and system health:
 
 ```bash
 # Synchronize memory facts across Claude, Codex, Gemini, & Hermes
 sys-engine memory sync
 
-# Audit and lint the memory graph for duplicate facts
+# Audit and deduplicate facts in memory database
 sys-engine memory lint
 
-# Run full system diagnostic benchmark
+# Run system health diagnostics
 sys-engine health
 ```
 
 ---
 
-## 🛡️ Security & Privacy
+## License
 
-This repository contains **zero hardcoded secrets, private notes, or API keys**. All credentials, database paths, and API endpoints are read dynamically from environment variables (`.env`) and local SQLite database files.
-
----
-
-<div align="center">
-
-### 📄 License
-Licensed under the [MIT License](LICENSE).
-
-*Engineered for maximum productivity, persistent memory compounding, and mouseless operation.*
-
-</div>
+MIT License. See [LICENSE](LICENSE) for details.
