@@ -9,7 +9,7 @@
 #     python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 
 fastapi==0.141.1
-uvicorn[standard]==0.52.1
+uvicorn[standard]==0.52.3
 aiofiles>=25.1.0,<26
 httpx>=0.28.1,<0.29
 python-multipart>=0.0.32   # required by FastAPI for the file-upload endpoints (avatar, etc.)
