@@ -1,9 +1,10 @@
 # Architecture
 
-A ~11k-line Python backend serving a ~13k-line single-page Alpine app
-(`index.html` + `app.js` + `style.css`). No build step, no framework, no
-client-side router. The whole UI is one `index.html` with `x-data="app()"` at
-the root; navigation is plain state mutation.
+A modular FastAPI backend serving a ~13k-line single-page Alpine app
+(`index.html` + `app.js` + `style.css`). `main.py` is now the application
+composition root plus the remaining legacy dashboard routes; dedicated routers
+own agents, storage, Obsidian, search, briefing, and study practice APIs.
+There is no build step, no framework, and no client-side router.
 
 This doc is the orientation map. The README has the install/config story; this
 one explains *how the pieces fit*.
@@ -29,7 +30,10 @@ FastAPI (main.py) at MC_HOST:MC_PORT
    │     -> subprocess [HERMES_PYTHON, "-m", "hermes_cli", ...]
    │     -> stream stdout, persist task id, return for the Agents tab to follow
    │
-   ├─ /api/obsidian/*  -> walk OBSIDIAN_VAULT, parse markdown, backlinks
+   ├─ /api/obsidian/*  -> `app/obsidian_api.py` -> walk OBSIDIAN_VAULT, parse markdown, backlinks
+   ├─ /api/search/global -> `app/search_api.py` -> ranked Obsidian + subject-note search
+   ├─ /api/briefing/today -> `app/briefing_api.py` -> cached daily mission briefing
+   ├─ /api/subjects/* + /api/quiz/* -> `app/practice_api.py` -> quiz + flashcard workspace
    ├─ /api/nlm/*       -> shells out to notebooklm-py CLI (Google NotebookLM,
    │                      separate ~/.notebooklm-venv) — NOT an HTTP proxy
    ├─ /api/tts/*       -> optional Kokoro TTS subprocess (read-aloud)
@@ -85,6 +89,24 @@ Optional integrations (NotebookLM via `notebooklm-py` CLI, Kokoro TTS, Anki
 export) are treated the same way: probe → degrade. The NotebookLM bridge
 requires an interactive Google login the first time the CLI is run; the
 endpoints return `{ok: false, reason: "..."}` until that's done.
+
+## Backend module boundaries
+
+`main.py` acts as the FastAPI composition root and retains legacy routes that
+have not yet been split into dedicated routers. Newer boundaries are isolated
+under `app/`:
+
+- `app/agents/` — PlannerAgent / ExecutorAgent
+- `app/runtime/hermes.py` — shared Hermes environment handling
+- `app/runtime/process.py` — shared subprocess lifecycle handling
+- `app/storage/dashboard_db.py` — dashboard SQLite bootstrap + connection policy
+- `app/obsidian_api.py` — Obsidian read/search/graph routes
+- `app/search_api.py` — cross-source search
+- `app/briefing_api.py` — daily briefing
+- `app/practice_api.py` — quiz, flashcard, and attempt APIs
+
+The goal of this split is not “one file per function”; it is one module per
+coherent subsystem, with explicit dependencies and focused tests.
 
 ## The SPA shell
 
@@ -194,7 +216,12 @@ the codegraph tool of your choice and point `config.CODEGRAPH_DB` at it.
 
 | Concern | File(s) |
 |---|---|
-| Web server entry + all routes | `main.py` |
+| Web server composition root + remaining legacy routes | `main.py` |
+| Agent orchestration API | `agents_api.py`, `agents_legacy_api.py`, `app/agents/` |
+| Runtime / subprocess helpers | `app/runtime/process.py`, `app/runtime/hermes.py` |
+| Dashboard storage bootstrap | `app/storage/dashboard_db.py` |
+| Obsidian / search / briefing | `app/obsidian_api.py`, `app/search_api.py`, `app/briefing_api.py` |
+| Quiz / flashcard workspace | `app/practice_api.py` |
 | Path / host / DB / interpreter config | `config.py` |
 | Hermes-backed reads | `stats.py`, `system_health.py`, `tools.py`, `orchestrator.py`, `automation_hooks.py` |
 | Tracker engine | `tracker.py`, `roadmap_spec.py` (`roadmap_private.py` override) |
