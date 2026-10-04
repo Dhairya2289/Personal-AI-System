@@ -135,6 +135,7 @@ class ExecutorAgent:
             # HIGH-risk actions require a short-lived token bound to this exact tool and args.
             allowed, reason = self.registry.check_permission(
                 tool_name,
+                tool_args,
                 confirmation_token=confirmation_token,
             )
 
