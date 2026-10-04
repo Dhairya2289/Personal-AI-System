@@ -1,188 +1,157 @@
-# Personal AI System (Hermes Mission Control)
+# Personal AI Mission Control
 
-A self-hosted, multi-agent operating environment and daily workflow dashboard built on top of Hermes Agent, OmniRoute Router, FastAPI, and a Universal Multi-Agent Memory Engine.
+Personal AI Mission Control is a self-hosted control plane for AI agent orchestration, persistent SQLite memory, study analytics, and Linux system automation.
 
-[![Python](https://img.shields.io/badge/Python-3.11+-1d1d1d?style=flat-square)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.133-1d1d1d?style=flat-square)](https://fastapi.tiangolo.com)
-[![OmniRoute](https://img.shields.io/badge/OmniRoute-Router-1d1d1d?style=flat-square)](https://github.com/Dhairya2289/Personal-AI-System)
-[![Hermes](https://img.shields.io/badge/Hermes-Multi--Agent-1d1d1d?style=flat-square)](https://github.com/Dhairya2289/Personal-AI-System)
-[![License](https://img.shields.io/badge/License-MIT-1d1d1d?style=flat-square)](LICENSE)
+Built with **FastAPI**, **SQLite (FTS5)**, and **Alpine.js**, it coordinates background agent tasks, indexes persistent semantic memories across tools, tracks structured study roadmaps, and monitors host system health without external telemetry or proprietary cloud lock-in.
 
 ---
 
-## Overview
-
-Personal AI System provides a unified web interface, background services, and multi-agent memory infrastructure. Instead of isolated chat sessions that lose context, the environment compiles structured memories across multiple AI agent runtimes into a persistent SQLite memory store and distributes them across provider memory files.
-
-### Core Modules
-
-* **Universal Multi-Agent Memory (`sys-engine memory`)**: Synchronizes structured facts across Claude CLI, OpenAI Codex, Gemini / Antigravity CLI, Hermes Agents, and the local FastAPI backend.
-* **OmniRoute Gateway (`:20128`)**: Local OpenAI-compatible API router that load-balances requests across account credentials and provider pools with fallback strategies.
-* **Academic Goal & Syllabus Engine**: Integrates NTA Physics, Chemistry, and Mathematics syllabi weightages to compute daily study blocks, practice question targets, and adherence stats.
-* **Research Paper Module**: Rendered Markdown viewer for technical documents, paper summaries, and derivations.
-* **System Health Diagnostics (`/api/system/health`)**: Aggregates systemd user service states, process locks, disk free space, and active TCP listeners without blocking or connection timeouts.
-
----
-
-## System Architecture
+## Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Clients ["Client Layer"]
-        UI["Browser SPA (FastAPI / Alpine.js)"]
-        BOT["Discord AI Gateways"]
-        CLI_U["Terminal CLI (Claude / Codex / Antigravity)"]
+    subgraph Client ["Client Layer"]
+        SPA["Web Dashboard (Alpine.js / Tailwind)"]
+        CLI["Developer CLI Tools"]
     end
 
-    subgraph Core ["Backend Engine (Port 51763)"]
-        API["FastAPI Server (main.py)"]
-        TRK["Academic Syllabus Tracker"]
-        RSR["Research Paper Renderer"]
-        MEM["Universal Memory Bridge"]
-        HLT["System Diagnostics"]
+    subgraph Server ["FastAPI Backend (127.0.0.1:51763)"]
+        API["REST & WebSocket API"]
+        PROV["Provider Manager (app/providers)"]
+        REG["Tool Registry & Permissions (app/tools)"]
+        AGENT["Planner & Executor Agents (app/agents)"]
+        STATS["Study & Discipline Tracker (tracker.py, stats.py)"]
     end
 
-    subgraph MemoryEngine ["Memory Layer"]
-        MDB["Hermes Memory Store (memory_store.db)"]
-        SYNC["sys-engine memory sync"]
-        CL_M["Claude MEMORY.md"]
-        CX_M["Codex MEMORY.md"]
-        GM_M["Gemini GEMINI.md"]
+    subgraph Storage ["Local Persistence Layer"]
+        MEM_DB["Memory Core SQLite (FTS5 BM25)"]
+        TRACK_DB["Tracker & Study SQLite"]
+        CACHE_DB["LLM Response Cache SQLite"]
     end
 
-    subgraph Routing ["API Router (Port 20128)"]
-        OM["OmniRoute Central Gateway"]
-        AGY["Antigravity CLI Credentials"]
-        KMC["Provider Key Pool"]
+    subgraph External ["Runtime & Model Providers"]
+        LLM["OpenAI / Gemini / Anthropic / Local Ollama"]
+        SYS["Linux Host (systemd, process groups)"]
     end
 
-    UI --> API
-    BOT --> MDB
-    CLI_U --> API
+    SPA -->|HTTP / WS| API
+    CLI -->|HTTP / IPC| API
 
-    API --> TRK
-    API --> RSR
-    API --> MEM
-    API --> HLT
+    API --> PROV
+    API --> REG
+    API --> STATS
+    API --> AGENT
 
-    MEM --> MDB
-    MDB --> SYNC
-    SYNC --> CL_M
-    SYNC --> CX_M
-    SYNC --> GM_M
+    AGENT --> REG
+    AGENT --> PROV
 
-    API --> OM
-    OM --> AGY
-    OM --> KMC
-```
-
-```
-+-----------------------------------------------------------------------------------+
-|                                  CLIENT LAYER                                     |
-|  [ Browser SPA ]             [ Discord Gateways ]           [ Terminal CLI ]      |
-+--------------------------------─────────┬────────────────────────────────---------+
-                                          | REST / IPC
-                                          v
-+-----------------------------------------------------------------------------------+
-|                        FASTAPI BACKEND ENGINE (:51763)                            |
-|  [ Syllabus Tracker ]  [ Research Renderer ]  [ Memory Bridge ]  [ Diagnostics ]  |
-+--------------------------------─────────┬────────────────────────────────---------+
-                                          |
-                   +----------------------+----------------------+
-                   |                                             |
-                   v                                             v
-+------------------------------------+        +------------------------------------+
-|          MEMORY ENGINE             |        |       OMNIROUTE ROUTER (:20128)    |
-| [ Hermes DB (memory_store.db) ]    |        | [ Central Gateway Router ]         |
-|      |                             |        |      |                             |
-|      v (sys-engine memory sync)    |        |      +---> [ Antigravity Accounts ]|
-| [ Claude ]  [ Codex ]  [ Gemini ]  |        |      +---> [ Provider Key Pool ]   |
-+------------------------------------+        +------------------------------------+
+    PROV --> LLM
+    PROV --> CACHE_DB
+    REG --> SYS
+    API --> MEM_DB
+    STATS --> TRACK_DB
 ```
 
 ---
 
-## Directory Structure
+## Core Subsystems
 
-```
-.
-├── main.py                     # FastAPI application entrypoint
-├── config.py                   # Path and environment resolution
-├── system_health.py            # Self-healing diagnostic router
-├── memory_bridge.py            # Multi-agent memory bridge
-├── tracker.py                  # Syllabus plan and practice engine
-├── research.py                 # Markdown research paper module
-├── cli/                        # Executable CLI tools
-│   └── hermes-memory-sync      # Memory sync executable
-├── systemd/                    # Systemd user service templates
-│   ├── omniroute.service.example
-│   ├── hermes-gateway.service.example
-│   ├── hermes-memory-sync.service.example
-│   ├── hermes-memory-sync.timer.example
-│   └── mission-control.service.example
-└── static/                     # Web UI static assets
-    ├── index.html
-    ├── app.js
-    └── style.css
-```
+### 1. Resilient Provider Abstraction (`app/providers/`)
+* **Multi-Provider Support**: Direct REST adapters for OpenAI, Google Gemini, Anthropic Claude, Groq, OpenRouter, and local offline Ollama.
+* **Circuit Breaker**: Automatically trips on 3 consecutive failures, enforces a 60-second cooldown, and tests recovery via half-open probe transitions.
+* **Sliding-Window Rate Limiter**: Proactively tracks requests per minute (RPM) and requests per day (RPD) to avoid 429 quota exhaustion.
+* **SQLite Response Caching**: Keyed SHA-256 request hashing with configurable TTLs and cache hit accounting.
+* **Task-Driven Fallback**: Automatic fallback chains (`speed`, `code`, `logic`, `research`, `local`) that route to backup providers when primary services degrade.
+
+### 2. Memory Engine (`memory.py`)
+* **Hybrid Lexical Search**: SQLite FTS5 (BM25) full-text indexing with logistic relevance squashing.
+* **Recency & Decay**: Tier-based exponential decay (`_HALF_LIFE_DAYS`) boosted on read access.
+* **Semantic Taxonomy**: Typed memories categorized by `fact`, `preference`, `error`, `task`, `insight`, `concept`, or `decision`.
+* **Confidence Scoring**: 0.0–1.0 metadata field weighting retrieval rankings alongside lexical match and salience.
+* **Safe Schema Migration**: Auto-migrates legacy SQLite databases via non-destructive `ALTER TABLE` operations.
+
+### 3. Permission-Gated Tool System (`app/tools/`, `app/agents/`)
+* **Explicit Risk Tiers**:
+  * `LOW` (Read-only): File reading, directory listing, memory search (auto-executed).
+  * `MEDIUM` (State-creating): Note taking, file creation (audit logged).
+  * `HIGH` (System-altering): Terminal execution, file deletion (requires explicit confirmation token).
+* **Process-Group Isolation**: Shell commands run in dedicated process groups (`os.setsid`) with SIGTERM → SIGKILL escalation on timeout.
+* **System Invariants**: Hardcoded runtime checks that prevent touching boot-critical packages or destructive paths.
+* **ReAct Execution**: Structured planning (`PlannerAgent`) and iterative tool execution (`ExecutorAgent`).
+
+### 4. Study & Progress Analytics (`tracker.py`, `stats.py`)
+* **Discipline Scoring**: 100-point daily score based on study block completion, practice questions, and daily execution metrics.
+* **Executive Overview**: `/api/stats/executive-overview` aggregates active streak, subject-level study hours, task progress, and AI ops telemetry.
 
 ---
 
-## Installation & Setup
+## Security Model
+
+* **Localhost Binding**: Binds exclusively to `127.0.0.1:51763` by default. Remote access is designed to go through SSH tunneling or private overlay networks (Tailscale).
+* **Strict Process Safety**: Rejects arbitrary `shell=True` blacklisting in favor of structured argument evaluation and process-group isolation.
+* **Fail-Safe Read Only**: External data sources degrade to read-only mode (`file:path?mode=ro`) to prevent accidental state corruption.
+
+---
+
+## Quick Start
 
 ### Prerequisites
-* Linux (CachyOS, Arch, Ubuntu, Fedora)
+* Linux (CachyOS, Arch, Ubuntu, or Debian recommended)
 * Python 3.11+
-* SQLite3
-* `systemd` (user-session support)
+* Git
 
 ### Installation
+
 ```bash
+# 1. Clone repository
 git clone https://github.com/Dhairya2289/Personal-AI-System.git
 cd Personal-AI-System
 
+# 2. Set up virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
 
+# 3. Install dependencies
+pip install -r requirements-dev.txt
+
+# 4. Configure environment
 cp .env.example .env
+# Edit .env with your preferred API keys or local endpoints
 ```
 
-### Running Locally
+### Running the Server
+
 ```bash
-uvicorn main:app --host 127.0.0.1 --port 51763
+uvicorn main:app --host 127.0.0.1 --port 51763 --reload
 ```
 
-### Systemd User Services Setup
-```bash
-mkdir -p ~/.config/systemd/user
-cp systemd/*.example ~/.config/systemd/user/
-cd ~/.config/systemd/user
-mv mission-control.service.example mission-control.service
-mv omniroute.service.example omniroute.service
-mv hermes-memory-sync.service.example hermes-memory-sync.service
-mv hermes-memory-sync.timer.example hermes-memory-sync.timer
+Access the dashboard at `http://127.0.0.1:51763`.
 
-systemctl --user daemon-reload
-systemctl --user enable --now mission-control.service omniroute.service hermes-memory-sync.timer
+---
+
+## Testing & Quality
+
+The codebase enforces linting and unit test coverage via GitHub Actions:
+
+```bash
+# Run unit tests
+pytest tests/unit/ -v
+
+# Run linter
+ruff check app tests
+
+# Verify Python syntax
+python -m py_compile *.py app/**/*.py
 ```
 
 ---
 
-## CLI Management (`sys-engine`)
+## Architecture Decision Records (ADRs)
 
-The `sys-engine` tool manages background memory operations and system health:
-
-```bash
-# Synchronize memory facts across Claude, Codex, Gemini, & Hermes
-sys-engine memory sync
-
-# Audit and deduplicate facts in memory database
-sys-engine memory lint
-
-# Run system health diagnostics
-sys-engine health
-```
+Key architectural decisions are documented under [`docs/decisions/`](docs/decisions/):
+* [ADR 001: SQLite and FTS5 for Persistent Local Memory](docs/decisions/001-sqlite-fts5-persistence.md)
+* [ADR 002: Process-Group Isolation for Local Tool Execution](docs/decisions/002-process-group-isolation.md)
+* [ADR 003: Multi-Tier Permission Model for Agent Tools](docs/decisions/003-tool-permission-gating.md)
 
 ---
 
