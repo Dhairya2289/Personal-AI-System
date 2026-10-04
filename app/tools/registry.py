@@ -125,7 +125,7 @@ class ToolRegistry:
         for token in expired:
             self._pending_confirmations.pop(token, None)
 
-    def _consume_confirmation(
+    def _confirmation_is_valid(
         self,
         tool_name: str,
         kwargs: dict[str, Any],
@@ -145,6 +145,16 @@ class ToolRegistry:
         if expected_fingerprint != self._args_fingerprint(tool_name, kwargs):
             return False
 
+        return True
+
+    def _consume_confirmation(
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        confirmation_token: str | None,
+    ) -> bool:
+        if not self._confirmation_is_valid(tool_name, kwargs, confirmation_token):
+            return False
         # Single-use: consume before execution so a token cannot be replayed.
         self._pending_confirmations.pop(confirmation_token, None)
         return True
@@ -152,6 +162,7 @@ class ToolRegistry:
     def check_permission(
         self,
         tool_name: str,
+        kwargs: dict[str, Any] | None = None,
         *,
         confirmation_token: str | None = None,
     ) -> tuple[bool, str]:
@@ -172,7 +183,12 @@ class ToolRegistry:
             )
 
         if tool.risk_level == RiskLevel.HIGH:
-            return True, "Confirmation token supplied; action still must be validated against exact arguments."
+            if not self._confirmation_is_valid(tool_name, kwargs or {}, confirmation_token):
+                return (
+                    False,
+                    f"Invalid, expired, or mismatched confirmation token for HIGH RISK tool '{tool_name}'.",
+                )
+            return True, "Permission granted"
 
         return True, "Permission granted"
 
