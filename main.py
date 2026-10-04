@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from app.runtime.process import communicate_with_timeout
+from app.storage.dashboard_db import db_connection, init_dashboard_dbs
 
 # ---------------------------------------------------------------------------
 # Paths — all resolved in config.py from environment variables (see .env.example).
@@ -241,134 +242,15 @@ async def _watch_pipeline_job(job_id: str, proc: asyncio.subprocess.Process, log
 
 
 def _db(path, *, timeout: float = 10.0) -> sqlite3.Connection:
-    """Open a dashboard-owned SQLite DB with a busy_timeout set.
-
-    All these DBs live under HERMES_HOME and have a single writer (this web
-    server), but FastAPI serves requests concurrently, so two handlers can hit
-    the same DB at once. ``busy_timeout`` makes the loser wait-and-retry instead
-    of raising "database is locked". ``timeout`` is the connect-level lock wait;
-    the PRAGMA is the per-statement wait — set both. Journal mode is left at the
-    default rollback journal (ntfs3-safe; never WAL here — see memory.py).
-    """
-    conn = sqlite3.connect(str(path), timeout=timeout)
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+    return db_connection(path, timeout=timeout)
 
 
-def _init_quiz_db() -> None:
-    """Ensure quiz_attempts table exists."""
-    conn = _db(QUIZ_DB)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS quiz_attempts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            total INTEGER NOT NULL,
-            percentage REAL NOT NULL,
-            time_seconds INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-
-def _init_flashcard_db() -> None:
-    conn = _db(FLASHCARD_DB)
-    c = conn.cursor()
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS flashcard_decks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            subject TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-_init_quiz_db()
-_init_flashcard_db()
-
-def _init_tasks_db() -> None:
-    conn = _db(PRODUCTIVITY_DB)
-    c = conn.cursor()
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS tasks (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            subject TEXT,
-            status TEXT NOT NULL DEFAULT 'todo',
-            position REAL NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-_init_tasks_db()
-
-def _init_stickies_db() -> None:
-    conn = _db(PRODUCTIVITY_DB)
-    c = conn.cursor()
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS stickies (
-            id TEXT PRIMARY KEY,
-            content TEXT NOT NULL,
-            color TEXT NOT NULL DEFAULT 'amber',
-            position REAL NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-def _init_pomodoro_db() -> None:
-    conn = _db(PRODUCTIVITY_DB)
-    c = conn.cursor()
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS pomodoro (
-            day TEXT PRIMARY KEY,
-            count INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-_init_stickies_db()
-_init_pomodoro_db()
-
-# Chat database
-def _init_chat_db() -> None:
-    conn = _db(CHAT_DB)
-    c = conn.cursor()
-    c.execute(
-        """
-        CREATE TABLE IF NOT EXISTS chat_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent TEXT NOT NULL,
-            role TEXT NOT NULL,
-            text TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    c.execute("CREATE INDEX IF NOT EXISTS ix_chat_agent ON chat_messages(agent, created_at)")
-    conn.commit()
-    conn.close()
-
-_init_chat_db()
+init_dashboard_dbs(
+    quiz_db=QUIZ_DB,
+    flashcard_db=FLASHCARD_DB,
+    productivity_db=PRODUCTIVITY_DB,
+    chat_db=CHAT_DB,
+)
 
 # Agent Discord channel IDs.
 #
