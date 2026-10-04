@@ -1,8 +1,6 @@
 import sqlite3
 
 import pytest
-from fastapi import HTTPException
-
 import app.practice_api as practice
 
 
