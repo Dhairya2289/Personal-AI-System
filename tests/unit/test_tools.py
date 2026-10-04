@@ -69,3 +69,32 @@ async def test_terminal_tool_safety(clean_registry: ToolRegistry):
     )
     assert not res_forbidden.success
     assert "forbidden critical pattern" in res_forbidden.error
+
+
+@pytest.mark.asyncio
+async def test_terminal_does_not_interpret_shell_operators(
+    tmp_path: Path, clean_registry: ToolRegistry
+):
+    marker = tmp_path / "should_not_exist.txt"
+
+    result = await clean_registry.execute(
+        "terminal_run",
+        {"command": f"echo safe; touch {marker}"},
+        user_confirmed=True,
+    )
+
+    assert result.success
+    assert result.output["stdout"] == f"safe; touch {marker}"
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_terminal_preserves_quoted_arguments(clean_registry: ToolRegistry):
+    result = await clean_registry.execute(
+        "terminal_run",
+        {"command": "printf '%s' 'hello world'"},
+        user_confirmed=True,
+    )
+
+    assert result.success
+    assert result.output["stdout"] == "hello world"
