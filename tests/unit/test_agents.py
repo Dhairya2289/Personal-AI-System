@@ -71,7 +71,7 @@ async def test_executor_agent_react_loop():
 @pytest.mark.asyncio
 async def test_executor_high_risk_confirmation_round_trip(tmp_path):
     mock_pm = AsyncMock(spec=ProviderManager)
-    command = f"echo safe"
+    command = "echo safe"
     mock_pm.generate.side_effect = [
         make_mock_resp(
             "Thought: I need to run the command.\n"
