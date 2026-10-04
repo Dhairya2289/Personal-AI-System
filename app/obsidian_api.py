@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html as _html
 import re as _re
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -222,7 +221,7 @@ async def obsidian_search(q: str = "", limit: int = 30) -> dict[str, Any]:
 
 # Wikilink matcher reused by the graph builder: [[Target]], [[Target|alias]],
 # [[Target#heading]]. We only care about the target (before | and #).
-_WIKILINK_RE = re.compile(r"\[\[([^\[\]]+?)\]\]")
+_WIKILINK_RE = _re.compile(r"\[\[([^\[\]]+?)\]\]")
 
 
 @router.get("/graph")
