@@ -3481,11 +3481,13 @@ from automation_hooks import router as automation_hooks_router  # noqa: E402
 from system_health import router as system_health_router  # noqa: E402
 from knowledge import router as knowledge_router  # noqa: E402
 from orchestrator import router as orchestrator_router  # noqa: E402
+from agents_api import router as agents_router  # noqa: E402
 
 app.include_router(tools_router)
 app.include_router(tracker_router)
 app.include_router(memory_router)
 app.include_router(notebooklm_router)
+app.include_router(agents_router)
 app.include_router(voice_router)
 app.include_router(stats_router)
 app.include_router(anki_router)
