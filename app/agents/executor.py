@@ -140,6 +140,14 @@ class ExecutorAgent:
             )
 
             if not allowed:
+                if self.registry.get(tool_name) is None:
+                    return AgentResponse(
+                        final_answer="",
+                        steps=steps,
+                        status=AgentStatus.FAILED,
+                        error=reason,
+                    )
+
                 # Pause and request confirmation
                 pending_step = ActionStep(
                     step_number=step_num,
