@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import APIRouter
 
 import config
-from notebooklm import _parse_json as _nlm_parse, _run as _nlm_run
 
 router = APIRouter(prefix="/api/briefing", tags=["briefing"])
 OBSIDIAN_VAULT = config.OBSIDIAN_VAULT
@@ -42,7 +41,8 @@ async def _build_briefing() -> dict[str, Any]:
     # NotebookLM notebook count (best-effort; never blocks the brief)
     nlm_notebooks = 0
     try:
-        from notebooklm import _run as _nlm_run, _parse_json as _nlm_parse
+        from notebooklm import _parse_json as _nlm_parse
+        from notebooklm import _run as _nlm_run
         rc, out, _err = await _nlm_run(["list", "--json"], timeout=10.0)
         if rc == 0:
             ok, data = _nlm_parse(out)
@@ -100,7 +100,7 @@ async def briefing_today(refresh: bool = False) -> dict[str, Any]:
     """Return today's daily mission briefing. Cached for 1h by default;
     pass ?refresh=1 to force a rebuild."""
     key = datetime.now().astimezone().date().isoformat()
-    now = _time.time()
+    now = time.time()
     cached = _BRIEFING_CACHE.get(key)
     if not refresh and cached and (now - cached[0]) < _BRIEFING_TTL:
         return cached[1]
