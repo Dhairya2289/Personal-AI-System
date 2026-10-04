@@ -21,6 +21,10 @@ FastAPI (main.py) at MC_HOST:MC_PORT
    │     -> open one of HERMES_HOME/*.db (read-only, mode=ro)
    │     -> shape into JSON for the relevant Alpine tab
    │
+   ├─ /api/agents/plan, /api/agents/execute
+   │     -> PlannerAgent / ExecutorAgent -> ProviderManager + ToolRegistry
+   │     -> high-risk actions pause for exact-action confirmation before execution
+   │
    ├─ /api/upload, /api/agents/run, /api/research/run, …
    │     -> subprocess [HERMES_PYTHON, "-m", "hermes_cli", ...]
    │     -> stream stdout, persist task id, return for the Agents tab to follow
