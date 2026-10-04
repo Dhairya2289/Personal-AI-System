@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 import config
+from app.runtime.hermes import build_agent_env
 from app.runtime.process import communicate_with_timeout
 
 router = APIRouter(prefix="/api/agents", tags=["legacy-agents"])
@@ -28,81 +29,7 @@ AGENT_LOG_DB = config.AGENT_LOG_DB
 
 KNOWN_AGENTS = {"bill", "vault", "scholar", "quizmaster", "planner", "dev"}
 
-_AGENT_REQUIRED_KEYS = (
-    "TOKENROUTER_API_KEY",
-    "TOKENROUTER_BASE_URL",
-    "TOKENROUTER_MODEL",
-    "TOKENLB_API_KEY",
-    "TOKENLB_BASE_URL",
-    "NOUS_API_KEY",
-    "KIRO_GATEWAY_API_KEY",
-    "KIMCHI_API_KEY",
-    "KIMCHI_BASE_URL",
-    "OPENROUTER_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-)
-
-DEFAULT_AGENT_PROVIDER = os.environ.get("MC_AGENT_PROVIDER", "custom:omniroute")
-DEFAULT_AGENT_MODEL = os.environ.get("MC_AGENT_MODEL", "kimchi/kimi-k2.7")
-
-
-def _inject_telegram_env(env: dict[str, str]) -> None:
-    """Hydrate Telegram settings from the local Hermes env file when needed."""
-    env_file = config.ENV_FILE
-    if not env_file.is_file() or all(
-        env.get(key) for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_HOME_CHANNEL")
-    ):
-        return
-
-    try:
-        text = env_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return
-
-    needed = {"TELEGRAM_BOT_TOKEN", "TELEGRAM_HOME_CHANNEL"}
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if key in needed and not env.get(key):
-            env[key] = value.strip()
-
-
-def _hydrate_agent_env(env: dict[str, str], profile_dir: Path) -> None:
-    """Copy missing provider credentials from the agent profile env file."""
-    env_file = profile_dir / ".env"
-    if not env_file.is_file():
-        env_file = config.ENV_FILE
-    if not env_file.is_file() or all(env.get(key) for key in _AGENT_REQUIRED_KEYS):
-        return
-
-    try:
-        text = env_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if key in _AGENT_REQUIRED_KEYS and not env.get(key):
-            env[key] = value.strip().strip('"').strip("'")
-
-
-def _apply_agent_provider_env(env: dict[str, str]) -> tuple[str, str]:
-    provider = os.environ.get("MC_AGENT_PROVIDER", DEFAULT_AGENT_PROVIDER).strip()
-    model = os.environ.get("MC_AGENT_MODEL", DEFAULT_AGENT_MODEL).strip()
-    provider = provider or DEFAULT_AGENT_PROVIDER
-    model = model or DEFAULT_AGENT_MODEL
-    env["HERMES_INFERENCE_PROVIDER"] = provider
-    env["HERMES_INFERENCE_MODEL"] = model
-    return provider, model
-
+_
 
 
 async def run_agent_oneshot(
@@ -130,12 +57,13 @@ async def run_agent_oneshot(
     if not HERMES_PYTHON.is_file():
         raise HTTPException(status_code=500, detail=f"hermes python not found: {HERMES_PYTHON}")
 
-    env = os.environ.copy()
-    env["HERMES_HOME"] = str(hermes_home)
-    env["AGENT_LOG_DB"] = str(AGENT_LOG_DB)
-    _inject_telegram_env(env)
-    _hydrate_agent_env(env, hermes_home)
-    _apply_agent_provider_env(env)
+    env = build_agent_env(
+        hermes_home,
+        hermes_home=hermes_home,
+        agent_log_db=AGENT_LOG_DB,
+    )
+    provider_flag = env["HERMES_INFERENCE_PROVIDER"]
+    model_flag = env["HERMES_INFERENCE_MODEL"]
 
     cmd = [
         str(HERMES_PYTHON),
