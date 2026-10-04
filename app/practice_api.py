@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,12 +80,6 @@ def _list_generated_files(directory: Path) -> list[dict[str, Any]]:
 
 async def _spawn_quizmaster(task: str) -> None:
     hermes_home = PROFILES_DIR / "quizmaster"
-    if not HERMES_PYTHON.is_file():
-        raise HTTPException(
-            status_code=503,
-            detail=f"hermes python not found: {HERMES_PYTHON}",
-        )
-
     env = build_agent_env(
         hermes_home,
         hermes_home=hermes_home,
@@ -110,6 +105,14 @@ async def _spawn_quizmaster(task: str) -> None:
         stderr=asyncio.subprocess.DEVNULL,
     )
     await proc.wait()
+
+
+def _ensure_hermes() -> None:
+    if not HERMES_PYTHON.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=f"hermes python not found: {HERMES_PYTHON}",
+        )
 
 
 async def _launch_quizmaster(task: str) -> None:
@@ -152,6 +155,7 @@ async def generate_subject_quiz(subject: str) -> JSONResponse:
         f"Here are the notes:\n{notes_text[:8000]}"
     )
 
+    _ensure_hermes()
     asyncio.create_task(_launch_quizmaster(task))
     return JSONResponse(
         {
@@ -307,7 +311,7 @@ async def save_quiz_attempt(payload: dict[str, Any]) -> JSONResponse:
 @router.get("/api/quiz/attempts")
 async def list_quiz_attempts(subject: str | None = None, limit: int = 50) -> JSONResponse:
     conn = db_connection(QUIZ_DB)
-    conn.row_factory = __import__("sqlite3").Row
+    conn.row_factory = sqlite3.Row
     try:
         if subject:
             rows = [
