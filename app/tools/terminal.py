@@ -1,16 +1,19 @@
 """
 Safe terminal execution tool with process-group cleanup and confirmation gating.
-Replaces dangerous shell=True blacklist patterns with strict risk-gated execution.
+
+Commands are tokenized with shlex and executed directly without a shell.
+That means shell metacharacters (pipes, redirects, command substitution, &&, etc.)
+are treated as arguments instead of being interpreted.
 """
 from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import signal
 
 from app.tools.registry import BaseTool, RiskLevel, ToolResult
 
-# Prohibited destructive substrings (hard safety invariants)
 FORBIDDEN_PATTERNS = [
     "com.oplus.customize.coreapp",
     "com.google.android.devicelockcontroller",
@@ -22,7 +25,10 @@ FORBIDDEN_PATTERNS = [
 
 class RunCommandTool(BaseTool):
     name = "terminal_run"
-    description = "Execute a shell command with strict timeout and process group management. HIGH RISK."
+    description = (
+        "Execute a tokenized local command without shell interpretation, with strict timeout "
+        "and process-group management. HIGH RISK."
+    )
     risk_level = RiskLevel.HIGH
     requires_confirmation = True
 
@@ -33,6 +39,9 @@ class RunCommandTool(BaseTool):
         timeout: float = 30.0,
     ) -> ToolResult:
         cmd_str = command.strip()
+        if not cmd_str:
+            return ToolResult(success=False, error="Command cannot be empty.")
+
         for forbidden in FORBIDDEN_PATTERNS:
             if forbidden in cmd_str:
                 return ToolResult(
@@ -40,11 +49,18 @@ class RunCommandTool(BaseTool):
                     error=f"Execution blocked: Command contains forbidden critical pattern: '{forbidden}'",
                 )
 
+        try:
+            argv = shlex.split(cmd_str, posix=True)
+        except ValueError as exc:
+            return ToolResult(success=False, error=f"Invalid command quoting: {exc}")
+
+        if not argv:
+            return ToolResult(success=False, error="Command cannot be empty.")
+
         work_dir = os.path.expanduser(cwd) if cwd else os.getcwd()
         try:
-            # Launch in separate process group so timeout can cleanly reap all child processes
-            proc = await asyncio.create_subprocess_shell(
-                cmd_str,
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=work_dir,
@@ -56,7 +72,6 @@ class RunCommandTool(BaseTool):
                     proc.communicate(), timeout=timeout
                 )
             except TimeoutError:
-                # Escalating termination: SIGTERM -> SIGKILL to process group
                 try:
                     os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                     await asyncio.sleep(0.5)
