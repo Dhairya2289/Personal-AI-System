@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 import config
+from app.runtime.process import communicate_with_timeout
 
 router = APIRouter(prefix="/api/agents", tags=["legacy-agents"])
 
@@ -103,36 +104,6 @@ def _apply_agent_provider_env(env: dict[str, str]) -> tuple[str, str]:
     return provider, model
 
 
-def _signal_process_group(proc: asyncio.subprocess.Process, sig: signal.Signals) -> None:
-    if proc.returncode is not None:
-        return
-    try:
-        os.killpg(proc.pid, sig)
-    except ProcessLookupError:
-        return
-    except Exception:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-
-
-async def _communicate_with_timeout(
-    proc: asyncio.subprocess.Process,
-    timeout: float | None,
-) -> tuple[bytes, bytes, bool]:
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return stdout_bytes, stderr_bytes, False
-    except asyncio.TimeoutError:
-        _signal_process_group(proc, signal.SIGTERM)
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-        except asyncio.TimeoutError:
-            _signal_process_group(proc, signal.SIGKILL)
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-        return stdout_bytes, stderr_bytes, True
-
 
 async def run_agent_oneshot(
     agent: str,
@@ -184,7 +155,7 @@ async def run_agent_oneshot(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout_bytes, stderr_bytes, timed_out = await _communicate_with_timeout(proc, timeout)
+    stdout_bytes, stderr_bytes, timed_out = await communicate_with_timeout(proc, timeout)
 
     return {
         "agent": agent,
