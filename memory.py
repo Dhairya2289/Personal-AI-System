@@ -41,6 +41,9 @@ MEMORY_DB = HERMES_HOME / "memory_core.db"
 # CoALA-aligned memory tiers. `working` is short-lived scratch; the rest persist.
 KINDS = ("episodic", "semantic", "procedural", "working")
 
+# Semantic memory types (integrated from JARVIS memdir).
+MEM_TYPES = ("fact", "preference", "error", "task", "insight", "concept", "decision")
+
 # Half-life (days) for the recency component of the retrieval score, per tier.
 # Episodic memories fade faster; semantic/procedural are effectively durable.
 _HALF_LIFE_DAYS = {"episodic": 14.0, "working": 1.0, "semantic": 365.0, "procedural": 365.0}
@@ -149,6 +152,9 @@ def _init_db() -> None:
         CREATE TABLE IF NOT EXISTS memory_items (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             kind        TEXT NOT NULL DEFAULT 'episodic',  -- episodic|semantic|procedural|working
+            mem_type    TEXT NOT NULL DEFAULT 'fact',      -- fact|preference|error|task|insight|concept|decision
+            confidence  REAL NOT NULL DEFAULT 0.8,         -- 0..1 confidence in truth/reliability
+            decay       REAL NOT NULL DEFAULT 1.0,         -- 0..1 decay multiplier (refreshed on access)
             content     TEXT NOT NULL,
             summary     TEXT DEFAULT '',
             source      TEXT DEFAULT '',                   -- e.g. 'ai-tutor', 'chat', 'agent:scholar'
@@ -164,7 +170,17 @@ def _init_db() -> None:
             last_access TEXT
         )
     """)
+    # Auto-migration for existing databases: check existing columns and add missing ones
+    existing_cols = {row[1] for row in c.execute("PRAGMA table_info(memory_items)").fetchall()}
+    if "mem_type" not in existing_cols:
+        c.execute("ALTER TABLE memory_items ADD COLUMN mem_type TEXT NOT NULL DEFAULT 'fact'")
+    if "confidence" not in existing_cols:
+        c.execute("ALTER TABLE memory_items ADD COLUMN confidence REAL NOT NULL DEFAULT 0.8")
+    if "decay" not in existing_cols:
+        c.execute("ALTER TABLE memory_items ADD COLUMN decay REAL NOT NULL DEFAULT 1.0")
+
     c.execute("CREATE INDEX IF NOT EXISTS idx_mem_kind ON memory_items(kind)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_mem_type ON memory_items(mem_type)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_mem_subject ON memory_items(subject)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_mem_created ON memory_items(created_at)")
     # FTS5 mirror for lexical search (external-content, kept in sync via triggers).
@@ -207,6 +223,9 @@ def record_memory(
     content: str,
     *,
     kind: str = "episodic",
+    mem_type: str = "fact",
+    confidence: float = 0.8,
+    decay: float = 1.0,
     summary: str = "",
     source: str = "",
     actor: str = "",
@@ -228,15 +247,20 @@ def record_memory(
         return None
     if kind not in KINDS:
         kind = "episodic"
+    if mem_type not in MEM_TYPES:
+        mem_type = "fact"
+
+    conf = max(0.0, min(1.0, float(confidence)))
+    dec = max(0.0, min(1.0, float(decay)))
     now = _iso()
     try:
         conn = _conn()
         cur = conn.execute(
             """INSERT INTO memory_items
-               (kind, content, summary, source, actor, subject, tags, salience,
+               (kind, mem_type, confidence, decay, content, summary, source, actor, subject, tags, salience,
                 meta, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (kind, content, summary, source, actor, subject, tags,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (kind, mem_type, conf, dec, content, summary, source, actor, subject, tags,
              max(0.0, min(1.0, float(salience))),
              json.dumps(meta or {}), now, now),
         )
@@ -261,10 +285,12 @@ def retrieve(
     *,
     limit: int = 6,
     kinds: tuple[str, ...] | None = None,
+    mem_types: tuple[str, ...] | None = None,
+    min_confidence: float = 0.0,
     subject: str = "",
 ) -> list[dict[str, Any]]:
     """Hybrid lexical retrieval: FTS5 BM25 relevance, reweighted by recency
-    (per-tier half-life) and salience. Returns ranked memory dicts."""
+    (per-tier half-life), decay, confidence, and salience. Returns ranked memory dicts."""
     query = (query or "").strip()
     if not query:
         return []
@@ -287,6 +313,12 @@ def retrieve(
         if kinds:
             sql += " AND m.kind IN (%s)" % ",".join("?" * len(kinds))
             params.extend(kinds)
+        if mem_types:
+            sql += " AND m.mem_type IN (%s)" % ",".join("?" * len(mem_types))
+            params.extend(mem_types)
+        if min_confidence > 0.0:
+            sql += " AND m.confidence >= ?"
+            params.append(min_confidence)
         if subject:
             sql += " AND (m.subject = ? OR m.subject = '')"
             params.append(subject)
@@ -304,13 +336,17 @@ def retrieve(
         # lexical: map bm25 cost to ~0..1 (bm25 is typically negative-ish small)
         bm = float(d.pop("bm", 0.0) or 0.0)
         lexical = 1.0 / (1.0 + math.exp(bm))  # logistic squashing
-        # recency: exponential decay on the item's tier half-life
+        # recency & decay: exponential decay on the item's tier half-life multiplied by decay factor
         created = _parse_iso(d.get("created_at"))
         age_days = max(0.0, (now - created).total_seconds() / 86400.0) if created else 9999.0
         hl = _HALF_LIFE_DAYS.get(d.get("kind", "episodic"), 30.0)
-        recency = math.pow(0.5, age_days / hl)
+        base_decay = float(d.get("decay", 1.0) or 1.0)
+        recency = math.pow(0.5, age_days / hl) * base_decay
         sal = float(d.get("salience", 0.5) or 0.5)
-        score = 0.6 * lexical + 0.25 * recency + 0.15 * sal
+        conf = float(d.get("confidence", 0.8) or 0.8)
+
+        # Combined multi-dimensional score:
+        score = 0.50 * lexical + 0.20 * recency + 0.15 * sal + 0.15 * conf
         d["_score"] = round(score, 4)
         d["_age_days"] = round(age_days, 2)
         scored.append((score, d))
@@ -319,13 +355,14 @@ def retrieve(
 
 
 def _touch_access(ids: list[int]) -> None:
+    """Increment access count, refresh last_access timestamp, and boost decay."""
     if not ids:
         return
     now = _iso()
     try:
         conn = _conn()
         conn.executemany(
-            "UPDATE memory_items SET access_count = access_count + 1, last_access = ? WHERE id = ?",
+            "UPDATE memory_items SET access_count = access_count + 1, last_access = ?, decay = MIN(1.0, decay + 0.1) WHERE id = ?",
             [(now, i) for i in ids],
         )
         conn.commit()
@@ -363,8 +400,20 @@ async def memory_health() -> JSONResponse:
             row[0]: row[1]
             for row in conn.execute("SELECT kind, COUNT(*) FROM memory_items GROUP BY kind")
         }
+        by_mem_type = {
+            row[0]: row[1]
+            for row in conn.execute("SELECT mem_type, COUNT(*) FROM memory_items GROUP BY mem_type")
+        }
+        avg_conf = conn.execute("SELECT AVG(confidence) FROM memory_items").fetchone()[0] or 0.8
         conn.close()
-        return JSONResponse({"ok": True, "db": str(MEMORY_DB), "total": total, "by_kind": by_kind})
+        return JSONResponse({
+            "ok": True,
+            "db": str(MEMORY_DB),
+            "total": total,
+            "by_kind": by_kind,
+            "by_mem_type": by_mem_type,
+            "avg_confidence": round(float(avg_conf), 3),
+        })
     except sqlite3.Error as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
@@ -383,9 +432,21 @@ async def memory_record(payload: dict[str, Any]) -> JSONResponse:
         salience = float(payload.get("salience", 0.5))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="salience must be a number 0..1")
+    try:
+        confidence = float(payload.get("confidence", 0.8))
+    except (TypeError, ValueError):
+        confidence = 0.8
+    try:
+        decay = float(payload.get("decay", 1.0))
+    except (TypeError, ValueError):
+        decay = 1.0
+
     rid = record_memory(
         content,
         kind=str(payload.get("kind", "episodic")),
+        mem_type=str(payload.get("mem_type", "fact")),
+        confidence=confidence,
+        decay=decay,
         summary=str(payload.get("summary", "")),
         source=str(payload.get("source", "api")),
         actor=str(payload.get("actor", "")),
@@ -400,9 +461,24 @@ async def memory_record(payload: dict[str, Any]) -> JSONResponse:
 
 
 @router.get("/api/memory/search")
-async def memory_search(q: str, limit: int = 8, kind: str = "", subject: str = "") -> JSONResponse:
+async def memory_search(
+    q: str,
+    limit: int = 8,
+    kind: str = "",
+    mem_type: str = "",
+    min_confidence: float = 0.0,
+    subject: str = "",
+) -> JSONResponse:
     kinds = tuple(k for k in (kind,) if k in KINDS) or None
-    hits = retrieve(q, limit=max(1, min(50, limit)), kinds=kinds, subject=subject)
+    mem_types = tuple(m for m in (mem_type,) if m in MEM_TYPES) or None
+    hits = retrieve(
+        q,
+        limit=max(1, min(50, limit)),
+        kinds=kinds,
+        mem_types=mem_types,
+        min_confidence=min_confidence,
+        subject=subject,
+    )
     return JSONResponse({"ok": True, "query": q, "count": len(hits), "results": hits})
 
 

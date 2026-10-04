@@ -21,8 +21,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Code Quality & Lint Check (Ruff)
+        run: |
+          ruff check app tests
 
       - name: Verify Python Code Syntax
         run: |
-          python -m py_compile *.py
+          python -m py_compile *.py app/**/*.py
+
+      - name: Run Unit Tests (Pytest)
+        run: |
+          pytest tests/unit/ -v

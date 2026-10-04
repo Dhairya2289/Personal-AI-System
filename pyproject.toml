@@ -1,0 +1,31 @@
+[project]
+name = "personal-ai-system"
+version = "1.1.0"
+description = "Personal AI Mission Control — a self-hosted control plane for AI agents, persistent memory, research, study workflows, and local system automation."
+authors = [{ name = "Dhairya", email = "dhairya@example.com" }]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "aiofiles>=24.1.0",
+    "httpx>=0.28.1",
+    "python-multipart>=0.0.9",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra"
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = [".venv", "backups", "legacy", "static", ".codegraph", "node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

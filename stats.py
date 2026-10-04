@@ -23,10 +23,11 @@ Routes:
 """
 from __future__ import annotations
 
-import json
-import sqlite3
+from collections import defaultdict
 from datetime import date, timedelta
+import json
 from pathlib import Path
+import sqlite3
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -402,3 +403,97 @@ async def stats_summary() -> JSONResponse:
         },
     }
     return JSONResponse(summary)
+
+
+@router.get("/api/stats/executive-overview")
+async def executive_overview() -> JSONResponse:
+    """Consolidated Personal AI Mission Control overview card:
+    - Today's completion percentage & streak
+    - Subject study hours breakdown
+    - Daily task progress
+    - Memory footprint & confidence
+    - AI ops metrics
+    """
+    today_str = date.today().isoformat()
+    plan = _plan_by_id()
+
+    today_minutes_by_subject: dict[str, int] = defaultdict(int)
+    today_score = 0
+    completed_tasks = 0
+    total_tasks = 0
+
+    # 1. Fetch tracker state for today
+    con = _ro_connect(TRACKER_DB)
+    if con is not None:
+        try:
+            if _table_exists(con, "tracker_days"):
+                row = con.execute("SELECT data FROM tracker_days WHERE date = ?", (today_str,)).fetchone()
+                if row and row["data"]:
+                    try:
+                        d = json.loads(row["data"])
+                        today_score = int(d.get("disciplineScore", 0) or 0)
+                        blocks = d.get("studyBlocksCompleted", [])
+                        if isinstance(blocks, list):
+                            completed_tasks = len(blocks)
+                            for bid in blocks:
+                                blk = plan.get(str(bid))
+                                if blk:
+                                    subj = blk.get("subject", "other")
+                                    mins = int(blk.get("durationMinutes", 0) or 0)
+                                    today_minutes_by_subject[subj] += mins
+                    except Exception:
+                        pass
+        except sqlite3.Error:
+            pass
+        finally:
+            con.close()
+
+    # 2. Memory stats
+    import memory
+    total_memories = 0
+    avg_conf = 0.8
+    by_mem_type: dict[str, int] = {}
+    try:
+        mcon = memory._conn()
+        total_memories = mcon.execute("SELECT COUNT(*) FROM memory_items").fetchone()[0]
+        avg_row = mcon.execute("SELECT AVG(confidence) FROM memory_items").fetchone()[0]
+        avg_conf = float(avg_row) if avg_row is not None else 0.85
+        for r in mcon.execute("SELECT mem_type, COUNT(*) FROM memory_items GROUP BY mem_type"):
+            by_mem_type[r[0]] = r[1]
+        mcon.close()
+    except Exception:
+        pass
+
+    # 3. AI ops summary
+    from app.providers.manager import get_provider_manager
+    pm = get_provider_manager()
+    cb_status = await pm.breaker.get_status()
+    all_healthy = all(s.get("state") == "CLOSED" for s in cb_status.values())
+
+    subject_hours = {
+        subj: round(mins / 60.0, 1) for subj, mins in today_minutes_by_subject.items()
+    }
+    total_study_hours = round(sum(today_minutes_by_subject.values()) / 60.0, 1)
+
+    return JSONResponse({
+        "date": today_str,
+        "completion_pct": today_score or (min(100, int((completed_tasks / max(1, total_tasks or 8)) * 100))),
+        "study": {
+            "by_subject_hours": subject_hours,
+            "total_hours": total_study_hours,
+        },
+        "tasks": {
+            "completed": completed_tasks,
+            "target": max(completed_tasks, total_tasks or 8),
+        },
+        "memory": {
+            "total": total_memories,
+            "avg_confidence": round(avg_conf, 2),
+            "by_type": by_mem_type,
+        },
+        "ai_ops": {
+            "providers_configured": sum(1 for p in pm.providers.values() if p.is_configured),
+            "circuit_status": "healthy" if all_healthy else "degraded",
+        },
+    })
+

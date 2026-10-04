@@ -54,6 +54,8 @@ static/profile/*
 *.log
 *.log.*
 *.tmp
+logs/
+.pytest_cache/
 .DS_Store
 Thumbs.db
 
@@ -87,4 +89,4 @@ REDESIGN-LIME-SPEC.md
 # ---------------------------------------------------------------------------
 # Smoke tests (reference local URLs; portfolio repo doesn't run them)
 # ---------------------------------------------------------------------------
-tests/
+tests/smoke_*.js
