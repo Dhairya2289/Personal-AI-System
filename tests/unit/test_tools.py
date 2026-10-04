@@ -98,3 +98,45 @@ async def test_terminal_preserves_quoted_arguments(clean_registry: ToolRegistry)
 
     assert result.success
     assert result.output["stdout"] == "hello world"
+
+
+
+@pytest.mark.asyncio
+async def test_high_risk_confirmation_is_bound_and_single_use(tmp_path: Path):
+    reg = ToolRegistry()
+    reg.register(DeleteFileTool())
+
+    target = tmp_path / "target.txt"
+    other = tmp_path / "other.txt"
+    target.write_text("target", encoding="utf-8")
+    other.write_text("other", encoding="utf-8")
+
+    token, _ = reg.issue_confirmation("delete_file", {"path": str(target)})
+
+    # The token cannot be redirected to a different action.
+    wrong_target = await reg.execute(
+        "delete_file",
+        {"path": str(other)},
+        confirmation_token=token,
+    )
+    assert not wrong_target.success
+    assert wrong_target.requires_confirmation
+    assert other.exists()
+
+    # The original action succeeds with the same token.
+    deleted = await reg.execute(
+        "delete_file",
+        {"path": str(target)},
+        confirmation_token=token,
+    )
+    assert deleted.success
+    assert not target.exists()
+
+    # Confirmation is single-use and cannot be replayed.
+    replay = await reg.execute(
+        "delete_file",
+        {"path": str(target)},
+        confirmation_token=token,
+    )
+    assert not replay.success
+    assert replay.requires_confirmation
