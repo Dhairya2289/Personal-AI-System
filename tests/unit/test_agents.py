@@ -78,6 +78,11 @@ async def test_executor_high_risk_confirmation_round_trip(tmp_path):
             "Action: terminal_run\n"
             f'Action Input: {{"command": "{command}"}}'
         ),
+        make_mock_resp(
+            "Thought: I will run the previously approved command.\n"
+            "Action: terminal_run\n"
+            f'Action Input: {{"command": "{command}"}}'
+        ),
         make_mock_resp("Thought: Done.\nFinal Answer: Command completed."),
     ]
 
