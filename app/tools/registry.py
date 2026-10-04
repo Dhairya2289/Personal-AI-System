@@ -3,6 +3,9 @@ Tool Registry with Risk Levels and Permission Enforcement.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import secrets
 import time
 from enum import Enum
 from typing import Any
@@ -63,10 +66,13 @@ class BaseTool:
 
 
 class ToolRegistry:
-    """Manages tool registration, permission checks, and execution."""
+    """Manages tool registration, permission checks, confirmations, and execution."""
+
+    CONFIRMATION_TTL_SECONDS = 120.0
 
     def __init__(self):
         self._tools: dict[str, BaseTool] = {}
+        self._pending_confirmations: dict[str, tuple[str, str, float]] = {}
 
     def register(self, tool: BaseTool) -> None:
         self._tools[tool.name] = tool
@@ -77,41 +83,119 @@ class ToolRegistry:
     def list_tools(self) -> list[ToolDefinition]:
         return [tool.definition for tool in self._tools.values()]
 
-    def check_permission(self, tool_name: str, user_confirmed: bool = False) -> tuple[bool, str]:
+    @staticmethod
+    def _args_fingerprint(tool_name: str, kwargs: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            {"tool": tool_name, "args": kwargs},
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def issue_confirmation(
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        *,
+        ttl_seconds: float | None = None,
+    ) -> tuple[str, float]:
+        """Create a short-lived, single-use confirmation token bound to exact tool arguments."""
+        tool = self.get(tool_name)
+        if not tool:
+            raise ValueError(f"Tool '{tool_name}' not found.")
+        if tool.risk_level != RiskLevel.HIGH:
+            raise ValueError(f"Tool '{tool_name}' does not require confirmation.")
+
+        now = time.time()
+        ttl = ttl_seconds if ttl_seconds is not None else self.CONFIRMATION_TTL_SECONDS
+        expires_at = now + max(1.0, float(ttl))
+        token = secrets.token_urlsafe(24)
+        self._pending_confirmations[token] = (
+            tool_name,
+            self._args_fingerprint(tool_name, kwargs),
+            expires_at,
+        )
+        self._purge_expired_confirmations(now=now)
+        return token, expires_at
+
+    def _purge_expired_confirmations(self, *, now: float | None = None) -> None:
+        current = now if now is not None else time.time()
+        expired = [token for token, (_, _, expires_at) in self._pending_confirmations.items() if expires_at <= current]
+        for token in expired:
+            self._pending_confirmations.pop(token, None)
+
+    def _consume_confirmation(
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        confirmation_token: str | None,
+    ) -> bool:
+        if not confirmation_token:
+            return False
+
+        self._purge_expired_confirmations()
+        pending = self._pending_confirmations.get(confirmation_token)
+        if not pending:
+            return False
+
+        expected_tool, expected_fingerprint, _ = pending
+        if expected_tool != tool_name:
+            return False
+        if expected_fingerprint != self._args_fingerprint(tool_name, kwargs):
+            return False
+
+        # Single-use: consume before execution so a token cannot be replayed.
+        self._pending_confirmations.pop(confirmation_token, None)
+        return True
+
+    def check_permission(
+        self,
+        tool_name: str,
+        *,
+        confirmation_token: str | None = None,
+    ) -> tuple[bool, str]:
         """
-        Enforce safety boundary:
-        - LOW risk: Always allowed
-        - MEDIUM risk: Allowed with audit
-        - HIGH risk: Allowed ONLY if user_confirmed is True
+        Enforce the safety boundary:
+        - LOW risk: always allowed
+        - MEDIUM risk: allowed with audit at the caller
+        - HIGH risk: requires a valid confirmation token bound to the exact action
         """
         tool = self.get(tool_name)
         if not tool:
             return False, f"Tool '{tool_name}' not found."
 
-        if tool.risk_level == RiskLevel.HIGH and not user_confirmed:
+        if tool.risk_level == RiskLevel.HIGH and not confirmation_token:
             return (
                 False,
                 f"Confirmation required: Tool '{tool_name}' is classified as HIGH RISK ({tool.description}).",
             )
 
+        if tool.risk_level == RiskLevel.HIGH:
+            return True, "Confirmation token supplied; action still must be validated against exact arguments."
+
         return True, "Permission granted"
 
     async def execute(
-        self, tool_name: str, kwargs: dict[str, Any], user_confirmed: bool = False
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        *,
+        confirmation_token: str | None = None,
     ) -> ToolResult:
-        """Safely execute tool after running permission checks."""
-        allowed, reason = self.check_permission(tool_name, user_confirmed=user_confirmed)
+        """Safely execute a tool after validating its risk policy and confirmation token."""
         tool = self.get(tool_name)
         if not tool:
-            return ToolResult(success=False, error=reason, risk_level=RiskLevel.LOW)
+            return ToolResult(success=False, error=f"Tool '{tool_name}' not found.", risk_level=RiskLevel.LOW)
 
-        if not allowed:
-            return ToolResult(
-                success=False,
-                error=reason,
-                risk_level=tool.risk_level,
-                requires_confirmation=True,
-            )
+        if tool.risk_level == RiskLevel.HIGH:
+            if not self._consume_confirmation(tool_name, kwargs, confirmation_token):
+                return ToolResult(
+                    success=False,
+                    error=f"Valid confirmation token required for HIGH RISK tool '{tool_name}'.",
+                    risk_level=tool.risk_level,
+                    requires_confirmation=True,
+                )
 
         start = time.perf_counter()
         try:
