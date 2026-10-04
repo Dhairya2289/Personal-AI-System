@@ -37,14 +37,21 @@ async def test_file_tools_and_risk_gating(tmp_path: Path, clean_registry: ToolRe
     assert r_res.success
     assert "Hello Dhairya!" in r_res.output
 
-    # 3. Delete file without confirmation (High risk - BLOCKED)
-    d_res = await clean_registry.execute("delete_file", {"path": str(test_file)}, user_confirmed=False)
+    # 3. Delete file without a confirmation token (High risk - BLOCKED)
+    d_res = await clean_registry.execute("delete_file", {"path": str(test_file)})
     assert not d_res.success
     assert d_res.requires_confirmation
-    assert test_file.exists()  # File still exists!
+    assert test_file.exists()
 
-    # 4. Delete file WITH confirmation (High risk - EXECUTED)
-    d_confirmed = await clean_registry.execute("delete_file", {"path": str(test_file)}, user_confirmed=True)
+    # 4. Issue an action-bound confirmation and execute exactly that action.
+    token, _ = clean_registry.issue_confirmation(
+        "delete_file", {"path": str(test_file)}
+    )
+    d_confirmed = await clean_registry.execute(
+        "delete_file",
+        {"path": str(test_file)},
+        confirmation_token=token,
+    )
     assert d_confirmed.success
     assert not test_file.exists()
 
@@ -52,20 +59,33 @@ async def test_file_tools_and_risk_gating(tmp_path: Path, clean_registry: ToolRe
 @pytest.mark.asyncio
 async def test_terminal_tool_safety(clean_registry: ToolRegistry):
     # 1. Safe command without confirmation -> blocked because HIGH risk
-    res_unconfirmed = await clean_registry.execute("terminal_run", {"command": "echo 'safe'"}, user_confirmed=False)
+    res_unconfirmed = await clean_registry.execute(
+        "terminal_run", {"command": "echo 'safe'"}
+    )
     assert not res_unconfirmed.success
     assert res_unconfirmed.requires_confirmation
 
-    # 2. Safe command with confirmation -> executed
-    res_confirmed = await clean_registry.execute("terminal_run", {"command": "echo 'safe'"}, user_confirmed=True)
+    # 2. Confirm the exact command and execute it.
+    token, _ = clean_registry.issue_confirmation(
+        "terminal_run", {"command": "echo 'safe'"}
+    )
+    res_confirmed = await clean_registry.execute(
+        "terminal_run",
+        {"command": "echo 'safe'"},
+        confirmation_token=token,
+    )
     assert res_confirmed.success
     assert "safe" in res_confirmed.output["stdout"]
 
-    # 3. Forbidden command (even if confirmed) -> hard blocked!
+    # 3. Forbidden command is blocked even when confirmed.
+    forbidden_args = {"command": "pm uninstall com.oplus.customize.coreapp"}
+    forbidden_token, _ = clean_registry.issue_confirmation(
+        "terminal_run", forbidden_args
+    )
     res_forbidden = await clean_registry.execute(
         "terminal_run",
-        {"command": "pm uninstall com.oplus.customize.coreapp"},
-        user_confirmed=True,
+        forbidden_args,
+        confirmation_token=forbidden_token,
     )
     assert not res_forbidden.success
     assert "forbidden critical pattern" in res_forbidden.error
@@ -80,7 +100,9 @@ async def test_terminal_does_not_interpret_shell_operators(
     result = await clean_registry.execute(
         "terminal_run",
         {"command": f"echo safe; touch {marker}"},
-        user_confirmed=True,
+        confirmation_token=clean_registry.issue_confirmation(
+            "terminal_run", {"command": f"echo safe; touch {marker}"}
+        )[0],
     )
 
     assert result.success
@@ -93,7 +115,9 @@ async def test_terminal_preserves_quoted_arguments(clean_registry: ToolRegistry)
     result = await clean_registry.execute(
         "terminal_run",
         {"command": "printf '%s' 'hello world'"},
-        user_confirmed=True,
+        confirmation_token=clean_registry.issue_confirmation(
+            "terminal_run", {"command": "printf '%s' 'hello world'"}
+        )[0],
     )
 
     assert result.success
