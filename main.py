@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
+from app.runtime.process import communicate_with_timeout
 
 # ---------------------------------------------------------------------------
 # Paths — all resolved in config.py from environment variables (see .env.example).
@@ -118,7 +119,7 @@ async def _run_cmd_json(cmd: list[str], *, timeout: float = 12.0) -> tuple[Any |
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout_b, stderr_b, timed_out = await _communicate_with_timeout(proc, timeout)
+        stdout_b, stderr_b, timed_out = await communicate_with_timeout(proc, timeout)
         stdout = stdout_b.decode("utf-8", errors="replace")
         stderr = stderr_b.decode("utf-8", errors="replace")
         if timed_out:
@@ -236,39 +237,6 @@ async def _watch_pipeline_job(job_id: str, proc: asyncio.subprocess.Process, log
             job["log_tail"] = _compact_tail(log_path.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             job["log_tail"] = ""
-
-
-def _signal_process_group(proc: asyncio.subprocess.Process, sig: signal.Signals) -> None:
-    """Signal a subprocess and any children it spawned."""
-    if proc.returncode is not None:
-        return
-    try:
-        os.killpg(proc.pid, sig)
-    except ProcessLookupError:
-        return
-    except Exception:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-
-
-async def _communicate_with_timeout(
-    proc: asyncio.subprocess.Process,
-    timeout: float | None,
-) -> tuple[bytes, bytes, bool]:
-    """Communicate with a process, killing its whole process group on timeout."""
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return stdout_bytes, stderr_bytes, False
-    except asyncio.TimeoutError:
-        _signal_process_group(proc, signal.SIGTERM)
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-        except asyncio.TimeoutError:
-            _signal_process_group(proc, signal.SIGKILL)
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=2.0)
-        return stdout_bytes, stderr_bytes, True
 
 
 
