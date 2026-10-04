@@ -29,8 +29,6 @@ AGENT_LOG_DB = config.AGENT_LOG_DB
 
 KNOWN_AGENTS = {"bill", "vault", "scholar", "quizmaster", "planner", "dev"}
 
-_
-
 
 async def run_agent_oneshot(
     agent: str,
@@ -62,9 +60,6 @@ async def run_agent_oneshot(
         hermes_home=hermes_home,
         agent_log_db=AGENT_LOG_DB,
     )
-    provider_flag = env["HERMES_INFERENCE_PROVIDER"]
-    model_flag = env["HERMES_INFERENCE_MODEL"]
-
     cmd = [
         str(HERMES_PYTHON),
         "-m",
