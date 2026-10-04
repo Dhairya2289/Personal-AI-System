@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from app.runtime.process import communicate_with_timeout
+from app.runtime.hermes import build_agent_env
 from app.storage.dashboard_db import db_connection, init_dashboard_dbs
 from app.obsidian_api import router as obsidian_router
 from app.search_api import router as search_router
@@ -159,46 +160,6 @@ async def _run_cmd_text(cmd: list[str], *, timeout: float = 12.0) -> tuple[str, 
         )
     except Exception as exc:
         return "", str(exc), None
-
-
-def _apply_agent_provider_env(env: dict[str, str]) -> tuple[str, str]:
-    """Set the provider/model used by dashboard-launched Hermes processes."""
-    provider = os.environ.get("MC_AGENT_PROVIDER", DEFAULT_AGENT_PROVIDER).strip()
-    model = os.environ.get("MC_AGENT_MODEL", DEFAULT_AGENT_MODEL).strip()
-    provider = provider or DEFAULT_AGENT_PROVIDER
-    model = model or DEFAULT_AGENT_MODEL
-    env["HERMES_INFERENCE_PROVIDER"] = provider
-    env["HERMES_INFERENCE_MODEL"] = model
-    return provider, model
-
-
-def _hydrate_agent_env(env: dict[str, str], profile_dir: Path) -> None:
-    """Make sure the spawned agent has everything it needs from its profile's .env.
-
-    Reads ``<profile_dir>/.env`` and overlays any missing required keys into
-    ``env``. This is what fixes the "no final response was produced" failure
-    where the model had no API key.
-    """
-    env_file = profile_dir / ".env"
-    if not env_file.is_file():
-        # Fall back to global .env if profile .env is missing
-        env_file = config.ENV_FILE
-    if not env_file.is_file():
-        return
-    if all(env.get(k) for k in _AGENT_REQUIRED_KEYS):
-        return
-    try:
-        text = env_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        key = key.strip()
-        if key in _AGENT_REQUIRED_KEYS and not env.get(key):
-            env[key] = val.strip().strip('"').strip("'")
 
 
 def _pipeline_preflight() -> list[str]:
@@ -448,12 +409,13 @@ async def _run_agent_chat_turn(agent: str, user_text: str) -> None:
             _store_chat_message(agent, "assistant", f"[error] HERMES_HOME for '{agent}' not found.")
             return
 
-        env = os.environ.copy()
-        env["HERMES_HOME"] = str(hermes_home)
-        env["AGENT_LOG_DB"] = str(AGENT_LOG_DB)
-        _inject_telegram_env(env)
-        _hydrate_agent_env(env, hermes_home if agent != "bill" else HERMES_HOME_BILL)
-        provider_flag, model_flag = _apply_agent_provider_env(env)
+        env = build_agent_env(
+            hermes_home,
+            hermes_home=hermes_home,
+            agent_log_db=AGENT_LOG_DB,
+        )
+        provider_flag = env["HERMES_INFERENCE_PROVIDER"]
+        model_flag = env["HERMES_INFERENCE_MODEL"]
 
         cmd = [
             str(HERMES_PYTHON),
