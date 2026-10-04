@@ -1,6 +1,7 @@
 import sqlite3
 
 import pytest
+
 import app.practice_api as practice
 
 
