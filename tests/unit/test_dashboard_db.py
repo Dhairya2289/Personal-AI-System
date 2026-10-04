@@ -1,7 +1,5 @@
 import sqlite3
 
-import pytest
-
 from app.storage.dashboard_db import db_connection, init_dashboard_dbs
 
 
