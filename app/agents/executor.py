@@ -62,7 +62,7 @@ class ExecutorAgent:
         task: str,
         *,
         history: list[ActionStep] | None = None,
-        confirmed_step: int | None = None,
+        confirmation_token: str | None = None,
         model: str | None = None,
     ) -> AgentResponse:
         steps: list[ActionStep] = history or []
@@ -132,9 +132,11 @@ class ExecutorAgent:
             except Exception:
                 tool_args = {"raw_input": args_raw}
 
-            # Check confirmation for high-risk actions
-            user_confirmed = (confirmed_step == step_num)
-            allowed, reason = self.registry.check_permission(tool_name, user_confirmed=user_confirmed)
+            # HIGH-risk actions require a short-lived token bound to this exact tool and args.
+            allowed, reason = self.registry.check_permission(
+                tool_name,
+                confirmation_token=confirmation_token,
+            )
 
             if not allowed:
                 # Pause and request confirmation
@@ -146,6 +148,7 @@ class ExecutorAgent:
                     requires_confirmation=True,
                 )
                 steps.append(pending_step)
+                token, expires_at = self.registry.issue_confirmation(tool_name, tool_args)
                 return AgentResponse(
                     final_answer="",
                     steps=steps,
@@ -154,12 +157,34 @@ class ExecutorAgent:
                         "step_number": step_num,
                         "tool_name": tool_name,
                         "tool_args": tool_args,
+                        "confirmation_token": token,
+                        "expires_at": expires_at,
                         "message": reason,
                     },
                 )
 
-            # Execute permitted tool
-            res = await self.registry.execute(tool_name, tool_args, user_confirmed=user_confirmed)
+            res = await self.registry.execute(
+                tool_name,
+                tool_args,
+                confirmation_token=confirmation_token,
+            )
+
+            if not res.success and res.requires_confirmation:
+                # The token may have expired or been bound to a different action.
+                token, expires_at = self.registry.issue_confirmation(tool_name, tool_args)
+                return AgentResponse(
+                    final_answer="",
+                    steps=steps,
+                    status=AgentStatus.WAITING_CONFIRMATION,
+                    pending_confirmation={
+                        "step_number": step_num,
+                        "tool_name": tool_name,
+                        "tool_args": tool_args,
+                        "confirmation_token": token,
+                        "expires_at": expires_at,
+                        "message": res.error,
+                    },
+                )
             step_record = ActionStep(
                 step_number=step_num,
                 thought=thought,
@@ -173,6 +198,9 @@ class ExecutorAgent:
             messages.append(LLMMessage(role="assistant", content=f"Thought: {thought}\nAction: {tool_name}\nAction Input: {json.dumps(tool_args)}"))
             messages.append(LLMMessage(role="user", content=f"Observation: {obs}"))
             step_num += 1
+
+            # Confirmation is single-use. Never carry a consumed token to the next step.
+            confirmation_token = None
 
         return AgentResponse(
             final_answer="Reached maximum iteration steps without concluding.",
