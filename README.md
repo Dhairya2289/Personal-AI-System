@@ -152,6 +152,7 @@ Key architectural decisions are documented under [`docs/decisions/`](docs/decisi
 * [ADR 001: SQLite and FTS5 for Persistent Local Memory](docs/decisions/001-sqlite-fts5-persistence.md)
 * [ADR 002: Process-Group Isolation for Local Tool Execution](docs/decisions/002-process-group-isolation.md)
 * [ADR 003: Multi-Tier Permission Model for Agent Tools](docs/decisions/003-tool-permission-gating.md)
+* [ADR 004: Action-Bound Confirmation Tokens](docs/decisions/004-action-bound-confirmations.md)
 
 ---
 
